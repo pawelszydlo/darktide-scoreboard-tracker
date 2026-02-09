@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Darktide Scoreboard Tracker</title>
+<script src="https://unpkg.com/vue@3.4.21/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1" integrity="sha384-oNtu+d18330MVFpltUTve1DatxCkkctlpA2AC3GulbVFOSqhHdDat3qHse/Lbuek" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.js"></script>
+<link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+<div id="app">
+  <!-- Ingestion bar -->
+  <div class="ingest-bar">
+    <template v-if="hasNativeAccess">
+      <button @click="pickDirectory" :disabled="ingesting || !dbReady">
+        {{ dirHandle ? 'Change Directory' : 'Choose Scoreboard Directory' }}
+      </button>
+      <button v-if="dirHandle" @click="reingest" :disabled="ingesting">
+        Re-scan Files
+      </button>
+    </template>
+    <button v-else @click="pickFiles" :disabled="ingesting || !dbReady">
+      Import Scoreboard Files
+    </button>
+    <span v-if="!hasNativeAccess" class="fallback-warning tooltip-wrap tooltip-below"
+      data-tooltip="Your browser does not support the File System Access API. Automatic re-scanning is not available. Use Chrome, Opera, or Edge for full functionality.">&#9888;</span>
+    <span class="game-count">{{ gameCountDisplay }} games in database</span>
+    <span v-if="ingestProgress" class="progress-text">{{ ingestProgress }}</span>
+    <button class="btn-danger ml-auto" @click="resetDatabase" :disabled="ingesting">Reset DB</button>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls" v-if="dbReady">
+    <div class="controls-row">
+      <div class="control-group">
+        <label>Property</label>
+        <multi-select
+          v-model="selectedPropertyIds"
+          :display-label="selectedPropertyNames"
+          :is-open="openDropdown === 'property'"
+          :show-all="false"
+          @toggle="toggleDropdown('property')"
+          @close="openDropdown = null">
+          <template v-for="group in propertyGroups" :key="group.group_id">
+            <div class="group-header" :style="{color: groupColor(group.group_id)}">
+              {{ group.group_name }}
+            </div>
+            <label v-for="property in group.properties" :key="property.id"
+              :style="{ paddingLeft: (10 + propertyDepth(property.id) * 14) + 'px', color: propertyLevelColor(property.id) }">
+              <input type="checkbox" :value="property.id" v-model="selectedPropertyIds"
+                :disabled="selectedPropertyIds.length >= MAX_SELECTED_PROPERTIES && !selectedPropertyIds.includes(property.id)">
+              {{ property.display_name }}
+            </label>
+          </template>
+        </multi-select>
+      </div>
+
+      <div class="control-group">
+        <label>Range</label>
+        <select v-model="rangeMode">
+          <option value="all">All Time</option>
+          <option value="7d">Last 7 Days</option>
+          <option value="30d">Last 30 Days</option>
+          <option value="90d">Last 90 Days</option>
+          <option value="365d">Last 365 Days</option>
+          <option value="custom">Custom Dates</option>
+          <option value="last_n">Last N Games</option>
+        </select>
+        <template v-if="rangeMode === 'custom'">
+          <input type="date" v-model="customStartDate">
+          <span class="date-sep">-</span>
+          <input type="date" v-model="customEndDate">
+        </template>
+        <input v-if="rangeMode === 'last_n'" type="number" v-model.number="lastNGames"
+          min="1" max="10000" class="input-last-n" placeholder="N">
+      </div>
+
+      <div class="control-group">
+        <label>Result</label>
+        <select v-model="resultFilter">
+          <option value="all">All</option>
+          <option value="won">Won Only</option>
+          <option value="won_and_long_lost">Won and Lost 20+ minutes</option>
+          <option value="lost">Lost Only</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label>Difficulty</label>
+        <multi-select
+          v-model="selectedDifficulties"
+          :display-label="difficultyLabel"
+          :is-open="openDropdown === 'difficulty'"
+          :all-values="availableDifficulties.map(d => d.id)"
+          @toggle="toggleDropdown('difficulty')"
+          @close="openDropdown = null">
+          <label v-for="difficulty in availableDifficulties" :key="difficulty.id">
+            <input type="checkbox" :value="difficulty.id" v-model="selectedDifficulties">
+            {{ difficulty.name }}
+          </label>
+        </multi-select>
+      </div>
+
+      <div class="control-group">
+        <label>Mission</label>
+        <multi-select
+          v-model="selectedMissions"
+          :display-label="missionLabel"
+          :is-open="openDropdown === 'mission'"
+          :all-values="availableMissions.map(m => m.id)"
+          @toggle="toggleDropdown('mission')"
+          @close="openDropdown = null">
+          <label v-for="mission in availableMissions" :key="mission.id">
+            <input type="checkbox" :value="mission.id" v-model="selectedMissions">
+            {{ mission.name }}
+          </label>
+        </multi-select>
+      </div>
+
+      <div class="control-group">
+        <label>Modifier</label>
+        <multi-select
+          v-model="selectedModifiers"
+          :display-label="modifierLabel"
+          :is-open="openDropdown === 'modifier'"
+          :all-values="[...availableModifiers]"
+          @toggle="toggleDropdown('modifier')"
+          @close="openDropdown = null">
+          <label v-for="modifier in availableModifiers" :key="modifier">
+            <input type="checkbox" :value="modifier" v-model="selectedModifiers">
+            {{ modifier }}
+          </label>
+        </multi-select>
+      </div>
+
+      <div class="control-group ml-auto">
+        <button aria-label="Open player management" @click="showPlayerDialog = true">
+          Manage Players
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Error banner -->
+  <div v-if="errorMessage" class="error-banner">
+    <span>{{ errorMessage }}</span>
+    <button @click="errorMessage = ''">Dismiss</button>
+  </div>
+
+  <!-- Stats box -->
+  <div class="stats-box" v-if="(generalStatsData || statsData.length > 0) && trackedPlayers.length > 0">
+    <div class="stat-card" v-if="generalStatsData">
+      <div class="stat-card-title">General</div>
+      <div v-for="playerStat in generalStatsData.players" :key="playerStat.playerId" class="stat-player-row">
+        <div class="stat-color-dot" :style="{background: playerStat.color}"></div>
+        <span class="stat-name">{{ playerStat.name }}</span>
+        <span class="stat-value">Games: {{ playerStat.totalGames }}</span>
+        <span class="stat-value" v-if="showWinRate"
+          :data-tooltip="'Won ' + playerStat.wonGames + ' out of ' + playerStat.totalGames + ' games'">Win rate: {{ playerStat.winRate }}%</span>
+      </div>
+    </div>
+    <div class="stat-card" v-for="stat in statsData" :key="stat.propertyId">
+      <div class="stat-card-title">
+        {{ stat.propertyName }}
+        <span class="stat-card-close" role="button" aria-label="Remove property"
+          @click="removeProperty(stat.propertyId)">&times;</span>
+      </div>
+      <div v-for="playerStat in stat.players" :key="playerStat.playerId" class="stat-player-row">
+        <div class="stat-color-dot" :style="{background: playerStat.color}"></div>
+        <span class="stat-name">{{ playerStat.name }}</span>
+        <span class="stat-value">Avg: {{ formatNum(playerStat.average) }}</span>
+        <span class="stat-value stat-top-in"
+          :data-tooltip="'Was in first place in ' + playerStat.bestCount + ' out of ' + playerStat.bestTotal + ' games'">Top in: {{ playerStat.bestPercent }}%</span>
+        <span class="stat-value" :class="deviationClass(playerStat.deviation, stat.sortAscending)"
+          :data-tooltip="'Was summarily ' + Math.abs(playerStat.deviation).toFixed(1) + '% ' + (deviationClass(playerStat.deviation, stat.sortAscending) === 'positive' ? 'better' : 'worse') + ' than average'">
+          Avg dev: {{ playerStat.deviation >= 0 ? '+' : '' }}{{ playerStat.deviation.toFixed(1) }}%
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Graph toggles -->
+  <div class="graph-toggles" v-if="dbReady">
+    <button class="toggle-btn" :class="{on: normalizePerMinute}"
+      @click="normalizePerMinute = !normalizePerMinute">Per minute</button>
+    <button class="toggle-btn" :class="{on: showVsAverage}"
+      @click="showVsAverage = !showVsAverage">vs Average</button>
+    <button class="toggle-btn" :class="{on: hideUnnamed}"
+      @click="hideUnnamed = !hideUnnamed">Hide unnamed</button>
+    <button class="toggle-btn" :class="{on: hideBots}"
+      @click="hideBots = !hideBots">Hide bots</button>
+    <button class="toggle-btn" :class="{on: chartMode === 'bar'}"
+      @click="chartMode = chartMode === 'bar' ? 'line' : 'bar'">Bar chart</button>
+    <select :value="effectiveXAxisMode" class="select-sm" :disabled="chartMode === 'bar'"
+      :data-tooltip="chartMode === 'bar' ? 'Bar chart always uses game number' : null"
+      @change="xAxisMode = $event.target.value">
+      <option value="time">X: Time</option>
+      <option value="index">X: Game #</option>
+    </select>
+  </div>
+
+  <!-- Chart -->
+  <div class="chart-container">
+    <canvas ref="chartCanvas"></canvas>
+    <div id="chart-tooltip" style="opacity:0"></div>
+    <div v-if="!dbReady" class="chart-overlay">Initializing database...</div>
+    <div v-else-if="loading" class="chart-overlay">Loading...</div>
+    <div v-else-if="gameCountDisplay === 0" class="chart-overlay">Choose the Scoreboard mod history directory to get started</div>
+    <div v-else-if="games.length === 0" class="chart-overlay">No data</div>
+  </div>
+
+  <!-- Player management dialog -->
+  <div v-if="showPlayerDialog" class="modal-overlay"
+    @click.self="showPlayerDialog = false">
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Player Management">
+      <div class="modal-header">
+        <h2>Player Management</h2>
+        <button @click="showPlayerDialog = false">&times;</button>
+      </div>
+      <div class="modal-toolbar">
+        <span class="label-text">Min games:</span>
+        <input type="number" v-model.number="minGamesFilter" min="1" max="1000" class="input-sm">
+        <span class="label-text ml-auto">{{ humanPlayers.length }} players shown</span>
+      </div>
+      <div v-for="player in humanPlayers" :key="player.id" class="player-row">
+        <input type="color"
+          :value="playerEdits[player.id]?.color || '#888888'"
+          @input="updatePlayerEdit(player.id, 'color', $event.target.value)">
+        <input type="text"
+          :value="playerEdits[player.id]?.custom_name || ''"
+          @input="updatePlayerEdit(player.id, 'custom_name', $event.target.value)"
+          placeholder="Custom name">
+        <div class="player-names" :data-tooltip="player.names.join(', ')">
+          {{ player.names.join(', ') }}
+        </div>
+        <span class="game-count-badge">{{ player.game_count }} games</span>
+        <button class="btn-sm" @click="savePlayerSettings(player.id)">Save</button>
+        <button class="btn-sm"
+          v-if="playerEdits[player.id]?.custom_name || playerEdits[player.id]?.color"
+          @click="clearPlayerSettings(player.id)">Clear</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="src/app.js"></script>
+</body>
+</html>
