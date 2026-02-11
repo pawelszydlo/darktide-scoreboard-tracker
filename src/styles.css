@@ -227,9 +227,6 @@ button.active { background: var(--accent); }
   max-width: 500px;
   min-width: 300px;
 }
-.stat-card-general {
-    min-width: 400px;
-}
 .stat-card-title {
   font-size: 11px;
   color: var(--text2);
@@ -276,8 +273,11 @@ button.active { background: var(--accent); }
   width: 6px;
   height: 6px;
 }
-.stat-win-rate, .stat-win-streak { color: var(--green); }
-.stat-loss-streak { color: var(--red); }
+.stat-win-rate { color: var(--green); }
+.streak-value { white-space: nowrap; }
+.streak-win { color: var(--green); }
+.streak-loss { color: var(--red); }
+.stat-streaks[data-tooltip]::after { white-space: pre; }
 
 .graph-toggles {
   padding: 6px 16px;

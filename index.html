@@ -153,7 +153,7 @@
 
   <!-- Stats box -->
   <div class="stats-box" v-if="(generalStatsData || statsData.length > 0) && trackedPlayers.length > 0">
-    <div class="stat-card stat-card-general" v-if="generalStatsData">
+    <div class="stat-card" v-if="generalStatsData">
       <div class="stat-card-title">General</div>
       <div v-for="(playerStat, idx) in generalStatsData.players" :key="playerStat.playerId + '-' + idx"
         :class="['stat-player-row', { 'stat-sub-row': playerStat._isSubName }]">
@@ -163,8 +163,7 @@
         <span class="stat-value">Games: {{ playerStat.totalGames }}</span>
         <span class="stat-value stat-win-rate" v-if="showWinRate"
           :data-tooltip="'Won ' + playerStat.wonGames + ' out of ' + playerStat.totalGames + ' games. Win rate: ' + playerStat.winRate + '%'">W&#8209;rate: {{ playerStat.winRate }}%</span>
-        <span class="stat-value stat-win-streak" :data-tooltip="'Winning streak: ' + playerStat.winStreak + ' games'">W&#8209;strk: {{ playerStat.winStreak }}</span>
-        <span class="stat-value stat-loss-streak" :data-tooltip="'Losing streak: ' + playerStat.lossStreak + ' games'">L&#8209;strk: {{ playerStat.lossStreak }}</span>
+        <span class="stat-value stat-streaks" v-if="showStreaks" :data-tooltip="'Winning streak: ' + playerStat.winStreak + ' games\nLosing streak: ' + playerStat.lossStreak + ' games'">Streaks: <span class="streak-value"><span class="streak-win">{{ playerStat.winStreak }}</span> | <span class="streak-loss">{{ playerStat.lossStreak }}</span></span></span>
       </div>
     </div>
     <div class="stat-card" v-if="relativeStatsData && (relativeStatsData.togetherPairs.length > 0 || relativeStatsData.apartPairs.length > 0)">

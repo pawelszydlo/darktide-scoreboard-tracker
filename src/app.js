@@ -2055,6 +2055,8 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
     resultFilter.value === 'all' || resultFilter.value === 'won_and_long_lost'
   );
 
+  const showStreaks = computed(() => resultFilter.value === 'all');
+
   const generalStatsData = computed(() => {
     if (games.value.length === 0 || trackedPlayers.value.length === 0) return null;
     // Build groups with parent and their sub-rows
@@ -2401,7 +2403,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
   return {
     chartCanvas, normalizePerMinute, showVsAverage, hideUnnamed, hideBots,
     chartMode, xAxisMode, effectiveXAxisMode, perName, hiddenLegendProperties,
-    showWinRate, generalStatsData, relativeStatsData, statsData,
+    showWinRate, showStreaks, generalStatsData, relativeStatsData, statsData,
     renderChart, restoreChartSettings, deviationClass,
   };
 }
