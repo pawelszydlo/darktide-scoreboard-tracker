@@ -500,3 +500,22 @@ button.active { background: var(--accent); }
   font-family: monospace;
   color: #ccc;
 }
+
+.app-footer {
+  padding: 6px 16px;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text2);
+}
+.app-footer a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.app-footer a:hover {
+  text-decoration: underline;
+}

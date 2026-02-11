@@ -238,6 +238,12 @@
     <div v-else-if="games.length === 0" class="chart-overlay">No data</div>
   </div>
 
+  <!-- Footer -->
+  <div class="app-footer">
+    <span>&copy; Darktide Scoreboard Tracker &mdash; Licensed under <a href="https://polyformproject.org/licenses/noncommercial/1.0.0" target="_blank" rel="noopener">PolyForm Noncommercial 1.0.0</a></span>
+    <span>Contribute on <a href="https://github.com/pawelszydlo/darktide-scoreboard-tracker" target="_blank" rel="noopener">GitHub</a></span>
+  </div>
+
   <!-- Player management dialog -->
   <div v-if="showPlayerDialog" class="modal-overlay"
     @click.self="showPlayerDialog = false">
