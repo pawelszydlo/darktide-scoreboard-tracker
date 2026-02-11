@@ -278,10 +278,15 @@
           {{ player.names.join(', ') }}
         </div>
         <span class="game-count-badge">{{ player.game_count }} games</span>
-        <button class="btn-sm" @click="savePlayerSettings(player.id)">Save</button>
+        <button class="btn-sm" @click="savePlayerSettings(player.id)"
+          :disabled="!playerEdits[player.id]?.custom_name">Save</button>
         <button class="btn-sm"
-          v-if="playerEdits[player.id]?.custom_name || playerEdits[player.id]?.color"
+          v-if="player.custom_name || player.color"
           @click="clearPlayerSettings(player.id)">Clear</button>
+        <button
+          :class="['btn-sm', 'btn-main-player', { active: player.is_main }]"
+          :disabled="player.is_main || !(player.custom_name || player.color)"
+          @click="setMainPlayer(player.id)">{{ player.is_main ? 'Main' : 'Set Main' }}</button>
       </div>
     </div>
   </div>

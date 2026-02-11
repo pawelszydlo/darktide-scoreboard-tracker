@@ -110,6 +110,7 @@ button {
   transition: background 0.15s;
 }
 button:hover { background: var(--accent); }
+button:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
 button.active { background: var(--accent); }
 .btn-sm { padding: 2px 8px; font-size: 11px; }
 .toggle-btn {
@@ -390,6 +391,7 @@ button.active { background: var(--accent); }
   border-bottom: 1px solid var(--border);
   font-size: 12px;
 }
+.player-row:hover { background: rgba(255, 255, 255, 0.03); }
 .player-row:last-child { border-bottom: none; }
 .player-names {
   flex: 1;
@@ -419,6 +421,12 @@ button.active { background: var(--accent); }
   font-size: 10px;
   color: var(--text2);
   min-width: 30px;
+}
+.btn-main-player.active {
+  background: var(--accent);
+  color: #fff;
+  cursor: default;
+  opacity: 0.9;
 }
 
 /* Custom tooltips (replaces native title attributes) */

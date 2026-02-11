@@ -348,7 +348,8 @@ CREATE INDEX IF NOT EXISTS idx_scores_game_property ON scores(game_id, property_
 CREATE TABLE IF NOT EXISTS player_settings (
     player_id   TEXT PRIMARY KEY,
     custom_name TEXT,
-    color       TEXT
+    color       TEXT,
+    is_main     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -662,6 +663,7 @@ function getPlayers() {
       p.is_bot,
       ps.custom_name,
       ps.color,
+      ps.is_main,
       COALESCE(gc.cnt, 0) as game_count,
       gn.names
     FROM players p
@@ -681,6 +683,7 @@ function getPlayers() {
     game_count: r.game_count || 0,
     custom_name: r.custom_name || null,
     color: r.color || null,
+    is_main: !!r.is_main,
   }));
 }
 
@@ -794,10 +797,25 @@ function getGames(params) {
 
 /** Upsert a player's custom display name and color into the DB. */
 function savePlayerSettingsDB(playerId, customName, color) {
+  if (!customName && !color) {
+    runStatement(`DELETE FROM player_settings WHERE player_id = ?`, [playerId]);
+  } else {
+    runStatement(
+      `INSERT INTO player_settings (player_id, custom_name, color) VALUES (?, ?, ?)
+       ON CONFLICT(player_id) DO UPDATE SET custom_name = excluded.custom_name, color = excluded.color`,
+      [playerId, customName, color]
+    );
+  }
+  saveDatabase();
+}
+
+/** Designate a player as the main player (clearing any previous main). */
+function saveMainPlayer(playerId) {
+  runStatement(`UPDATE player_settings SET is_main = 0 WHERE is_main = 1`, []);
   runStatement(
-    `INSERT INTO player_settings (player_id, custom_name, color) VALUES (?, ?, ?)
-     ON CONFLICT(player_id) DO UPDATE SET custom_name = excluded.custom_name, color = excluded.color`,
-    [playerId, customName, color]
+    `INSERT INTO player_settings (player_id, is_main) VALUES (?, 1)
+     ON CONFLICT(player_id) DO UPDATE SET is_main = 1`,
+    [playerId]
   );
   saveDatabase();
 }
@@ -838,6 +856,7 @@ function autoSetupDefaultPlayer() {
   `);
   if (!top) return;
   savePlayerSettingsDB(top.player_id, 'Me', '#e94560');
+  saveMainPlayer(top.player_id);
 }
 
 /** Return total number of imported games. */
@@ -1136,6 +1155,7 @@ function computePlayerGeneralStats(player, games, nameFilter) {
     playerId: player.id,
     name: player.custom_name || player.names[0] || player.id,
     color: player.color || '#888',
+    isMain: player.is_main,
     totalGames,
     wonGames,
     winRate,
@@ -1176,6 +1196,7 @@ function computePlayerStats(player, games, propertyId, sortAscending, normalizeP
     playerId: player.id,
     name: player.custom_name || player.names[0] || player.id,
     color: player.color || '#888',
+    isMain: player.is_main,
     average,
     bestCount,
     bestTotal: total,
@@ -1999,12 +2020,18 @@ function usePlayerManagement() {
     loadPlayers();
   }
 
+  function setMainPlayer(playerId) {
+    saveMainPlayer(playerId);
+    loadPlayers();
+  }
+
   return {
     allPlayers, showPlayerDialog, playerEdits, minGamesFilter,
     trackedPlayers, humanPlayers, playerSettingsMap,
     loadPlayers, initPlayerEdits, restorePlayerSettings, updatePlayerEdit,
     savePlayerSettings: savePlayerSettingsAction,
     clearPlayerSettings: clearPlayerSettingsAction,
+    setMainPlayer,
   };
 }
 
@@ -2082,8 +2109,11 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
       }
       groups.push(group);
     }
-    // Sort groups by parent's total games (descending)
-    groups.sort((a, b) => b.parent.totalGames - a.parent.totalGames);
+    // Sort groups: main player first, then by total games (descending)
+    groups.sort((a, b) => {
+      if (a.parent.isMain !== b.parent.isMain) return a.parent.isMain ? -1 : 1;
+      return b.parent.totalGames - a.parent.totalGames;
+    });
     // Flatten into players array
     const players = [];
     for (const group of groups) {
@@ -2096,16 +2126,18 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
   const relativeStatsData = computed(() => {
     if (trackedPlayers.value.length < 2 || games.value.length === 0) return null;
     const tp = trackedPlayers.value;
-    // Find main player (most games)
+    // Find main player (marked as main, or fall back to most games)
     const gameCounts = tp.map(p => {
       let count = 0;
       for (const game of games.value) { if (p.id in game.scores) count++; }
       return count;
     });
-    // Skip if max game count is 0
     const maxGames = Math.max(...gameCounts);
     if (maxGames === 0) return null;
-    const mainIdx = gameCounts.indexOf(maxGames);
+    let mainIdx = tp.findIndex(p => p.is_main);
+    if (mainIdx === -1) {
+      mainIdx = gameCounts.indexOf(maxGames);
+    }
     const main = tp[mainIdx];
     // Together pairs: main player + each other player
     const togetherPairs = [];
@@ -2192,8 +2224,11 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
         }
         groups.push(group);
       }
-      // Sort groups by parent's total games (descending)
-      groups.sort((a, b) => b.parent.bestTotal - a.parent.bestTotal);
+      // Sort groups: main player first, then by total games (descending)
+      groups.sort((a, b) => {
+        if (a.parent.isMain !== b.parent.isMain) return a.parent.isMain ? -1 : 1;
+        return b.parent.bestTotal - a.parent.bestTotal;
+      });
       // Flatten into players array
       const players = [];
       for (const group of groups) {
