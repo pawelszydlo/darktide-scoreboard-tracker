@@ -58,6 +58,44 @@ Click "Reset DB" to wipe all data and start fresh.
 | Hide unnamed | Hide players without custom names |
 | Hide bots | Hide AI companions |
 
+## Statistics
+
+Statistics are shown below the filters when at least one player is tracked. They are organized into three card types:
+
+### General
+
+Always visible. Shows per-player summary stats:
+
+| Stat | Description | Visibility |
+|---|---|---|
+| Time | Total playtime across filtered games | Always |
+| Games | Number of games played | Always |
+| Win rate | Percentage of games won | Hidden when the Result filter is set to "Won" or "Lost" only |
+| Streaks | Longest winning and losing streaks | Only when the Result filter is set to "All" |
+
+When the **Per name** toggle is on, each player's stats are broken down into sub-rows by in-game character name.
+
+### Relative
+
+Visible when two or more players are tracked. Compares the player with the most games against each other tracked player:
+
+| Stat | Description | Visibility |
+|---|---|---|
+| Together | Number of games both players appeared in | Always |
+| W-rate (together) | Win rate in games played together | Hidden when the Result filter is set to "Won" or "Lost" only |
+| Apart | Number of games the main player played without the other | Always |
+| W-rate (apart) | Win rate in games played apart | Hidden when the Result filter is set to "Won" or "Lost" only |
+
+### Per-Property
+
+One card per selected property (e.g. Damage Dealt, Kills). Shows per-player stats for that property:
+
+| Stat | Description |
+|---|---|
+| Avg | Average value across all filtered games |
+| Top in | Percentage of games where the player had the best score for that property |
+| Avg dev | Average deviation from the team mean, shown as a percentage (positive = above average, negative = below) |
+
 ## Technical Details
 
 - Runs entirely in the browser - no server, no accounts, no data leaves your machine
