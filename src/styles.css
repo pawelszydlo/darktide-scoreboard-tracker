@@ -234,7 +234,6 @@ button.active { background: var(--accent); }
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 12px;
-  min-width: 200px;
   flex: 1;
   max-width: 500px;
   min-width: 300px;

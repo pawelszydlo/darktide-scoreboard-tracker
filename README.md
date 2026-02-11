@@ -17,9 +17,10 @@ Import your scoreboard data and get rich analytics on player performance:
 - **Deep Filtering** - Filter by difficulty, mission, modifiers, win/loss, date range, or last N games
 - **Per-Minute Normalization** - Normalize any stat by game duration for fair comparison
 - **vs. Average Mode** - See how each player deviates from the team average as a percentage
+- **vs. Others Mode** - Compare your main player's performance against the average of the other three players
 - **Win/Loss Shading** - Visual background markers showing game outcomes on the timeline
 - **General Statistics** - Game count, win rate, best-performer counts, and averages per player
-- **Player Management** - Assign custom names and colors to tracked players
+- **Player Management** - Assign custom names, colors, and a main player for focused comparisons
 
 ## Getting Started
 
@@ -53,6 +54,7 @@ Click "Reset DB" to wipe all data and start fresh.
 | Result | All, Won, Won+Long Lost, Lost |
 | Bar chart toggle | Switch between line (time-series) and bar (per-game) view |
 | vs Average toggle | Show deviation from team average instead of raw values |
+| vs Others toggle | Show main player's deviation from the other players' average (requires a main player) |
 | Per minute toggle | Normalize values by game duration |
 | X: Time / Game # | Change horizontal axis mode |
 | Hide unnamed | Hide players without custom names |
@@ -77,7 +79,7 @@ When the **Per name** toggle is on, each player's stats are broken down into sub
 
 ### Relative
 
-Visible when two or more players are tracked. Compares the player with the most games against each other tracked player:
+Visible when two or more players are tracked. Compares the main player (or the player with the most games if none is set) against each other tracked player:
 
 | Stat | Description | Visibility |
 |---|---|---|
@@ -94,13 +96,15 @@ One card per selected property (e.g. Damage Dealt, Kills). Shows per-player stat
 |---|---|
 | Avg | Average value across all filtered games |
 | Top in | Percentage of games where the player had the best score for that property |
-| Avg dev | Average deviation from the team mean, shown as a percentage (positive = above average, negative = below) |
+| Avg dev | Average deviation from the team mean, shown as a percentage (positive = above average, negative = below). In **vs Others** mode, only shown for the main player. |
 
 ## Technical Details
 
 - Runs entirely in the browser - no server, no accounts, no data leaves your machine
+- All dependencies vendored locally - works offline with no CDN requests
 - Data persisted in IndexedDB across sessions
 - Built with Vue.js, Chart.js, and sql.js (in-browser SQLite)
+- Responsive layout for smaller screens
 - Firefox/Safari supported via file input fallback (no directory picker API)
 
 ## License

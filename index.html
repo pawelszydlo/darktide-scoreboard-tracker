@@ -4,13 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Darktide Scoreboard Tracker 1.0</title>
-<script src="https://unpkg.com/vue@3.4.21/dist/vue.global.prod.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1" integrity="sha384-oNtu+d18330MVFpltUTve1DatxCkkctlpA2AC3GulbVFOSqhHdDat3qHse/Lbuek" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.js"></script>
+<script defer src="lib/vue.global.prod.js"></script>
+<script defer src="lib/chart.umd.js"></script>
+<script defer src="lib/chartjs-plugin-annotation.min.js"></script>
+<script defer src="lib/sql-asm.js"></script>
 <link rel="stylesheet" href="src/styles.css">
 </head>
 <body>
+<noscript>
+  <p style="color:#e0e0e0;background:#1c1c22;padding:2em;font-family:sans-serif;text-align:center;">
+    This app requires JavaScript. Please enable it in your browser.
+  </p>
+</noscript>
 <div id="app">
   <!-- Path hint overlay (Windows only) -->
   <div v-if="showPathHint" class="path-hint-overlay" @click="dismissPathHint">
@@ -55,15 +60,15 @@
           :show-all="false"
           @toggle="toggleDropdown('property')"
           @close="openDropdown = null">
-          <template v-for="group in propertyGroups" :key="group.group_id">
-            <div class="group-header" :style="{color: groupColor(group.group_id)}">
-              {{ group.group_name }}
+          <template v-for="group in propertyGroups" :key="group.groupId">
+            <div class="group-header" :style="{color: groupColor(group.groupId)}">
+              {{ group.groupName }}
             </div>
             <label v-for="property in group.properties" :key="property.id"
               :style="{ paddingLeft: (10 + propertyDepth(property.id) * 14) + 'px', color: propertyLevelColor(property.id) }">
               <input type="checkbox" :value="property.id" v-model="selectedPropertyIds"
                 :disabled="selectedPropertyIds.length >= MAX_SELECTED_PROPERTIES && !selectedPropertyIds.includes(property.id)">
-              {{ property.display_name }}
+              {{ property.displayName }}
             </label>
           </template>
         </multi-select>
@@ -277,27 +282,27 @@
           :value="playerEdits[player.id]?.color || '#888888'"
           @input="updatePlayerEdit(player.id, 'color', $event.target.value)">
         <input type="text"
-          :value="playerEdits[player.id]?.custom_name || ''"
-          @input="updatePlayerEdit(player.id, 'custom_name', $event.target.value)"
+          :value="playerEdits[player.id]?.customName || ''"
+          @input="updatePlayerEdit(player.id, 'customName', $event.target.value)"
           placeholder="Custom name">
         <div class="player-names" :data-tooltip="player.names.join(', ')">
           {{ player.names.join(', ') }}
         </div>
-        <span class="game-count-badge">{{ player.game_count }} games</span>
+        <span class="game-count-badge">{{ player.gameCount }} games</span>
         <button class="btn-sm" @click="savePlayerSettings(player.id)"
-          :disabled="!playerEdits[player.id]?.custom_name">Save</button>
+          :disabled="!playerEdits[player.id]?.customName">Save</button>
         <button class="btn-sm"
-          v-if="player.custom_name || player.color"
+          v-if="player.customName || player.color"
           @click="clearPlayerSettings(player.id)">Clear</button>
         <button
-          :class="['btn-sm', 'btn-main-player', { active: player.is_main }]"
-          :disabled="player.is_main || !(player.custom_name || player.color)"
-          @click="setMainPlayer(player.id)">{{ player.is_main ? 'Main' : 'Set Main' }}</button>
+          :class="['btn-sm', 'btn-main-player', { active: player.isMain }]"
+          :disabled="player.isMain || !(player.customName || player.color)"
+          @click="setMainPlayer(player.id)">{{ player.isMain ? 'Main' : 'Set Main' }}</button>
       </div>
     </div>
   </div>
 </div>
 
-<script src="src/app.js"></script>
+<script defer src="src/app.js"></script>
 </body>
 </html>

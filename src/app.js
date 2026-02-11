@@ -118,7 +118,7 @@ function computeGameMean(game, propertyId, shouldNormalizePerMinute) {
     .map(s => s[propertyId])
     .filter(v => v != null);
   if (values.length === 0) return 0;
-  const processed = values.map(v => normalizeValue(v, game.duration_seconds, shouldNormalizePerMinute));
+  const processed = values.map(v => normalizeValue(v, game.durationSeconds, shouldNormalizePerMinute));
   return processed.reduce((sum, v) => sum + v, 0) / processed.length;
 }
 
@@ -129,7 +129,7 @@ function computeGameMeanExcluding(game, propertyId, shouldNormalizePerMinute, ex
     .map(([_, s]) => s[propertyId])
     .filter(v => v != null);
   if (values.length === 0) return 0;
-  const processed = values.map(v => normalizeValue(v, game.duration_seconds, shouldNormalizePerMinute));
+  const processed = values.map(v => normalizeValue(v, game.durationSeconds, shouldNormalizePerMinute));
   return processed.reduce((sum, v) => sum + v, 0) / processed.length;
 }
 
@@ -139,7 +139,7 @@ function precomputeGameBests(games, propertyId, normalizePerMinute, sortAscendin
     const values = Object.values(game.scores)
       .map(s => s[propertyId])
       .filter(v => v != null)
-      .map(v => normalizeValue(v, game.duration_seconds, normalizePerMinute));
+      .map(v => normalizeValue(v, game.durationSeconds, normalizePerMinute));
     if (!values.length) return null;
     return sortAscending ? Math.max(...values) : Math.min(...values);
   });
@@ -201,6 +201,8 @@ const DEFAULT_GROUP_NAME = 'Resource & Teamwork';
 
 const INGEST_BATCH_SIZE = 50;
 const MAX_SELECTED_PROPERTIES = 5;
+const LONG_GAME_THRESHOLD_SECONDS = 1200;
+const FLOAT_EPSILON = 1e-9;
 
 const RANGE_DAYS = { '7d': 7, '30d': 30, '90d': 90, '365d': 365 };
 
@@ -461,9 +463,7 @@ async function _loadDirHandle() {
 
 /** Load sql.js, restore DB from IndexedDB (or create fresh), and apply schema. */
 async function initDatabase() {
-  _SQL = await initSqlJs({
-    locateFile: file => `https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/${file}`,
-  });
+  _SQL = await initSqlJs();
 
   const saved = await _loadFromIDB();
   if (saved) {
@@ -498,13 +498,16 @@ function runStatement(sql, params = []) {
 /** Execute a SQL SELECT and return all result rows as an array of objects. */
 function queryRows(sql, params = []) {
   const stmt = _db.prepare(sql);
-  if (params.length) stmt.bind(params);
-  const rows = [];
-  while (stmt.step()) {
-    rows.push(stmt.getAsObject());
+  try {
+    if (params.length) stmt.bind(params);
+    const rows = [];
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject());
+    }
+    return rows;
+  } finally {
+    stmt.free();
   }
-  stmt.free();
-  return rows;
 }
 
 /** Execute a SQL SELECT and return the first row, or null. */
@@ -608,19 +611,19 @@ function getProperties() {
   for (const row of rows) {
     allProps[row.id] = {
       id: row.id,
-      display_name: row.display_name,
-      group_id: row.group_id,
-      group_name: row.group_name,
-      sort_direction: row.sort_direction,
-      is_summary: !!row.is_summary,
-      parent_id: row.parent_id,
-      row_order: row.row_order,
+      displayName: row.display_name,
+      groupId: row.group_id,
+      groupName: row.group_name,
+      sortDirection: row.sort_direction,
+      isSummary: !!row.is_summary,
+      parentId: row.parent_id,
+      rowOrder: row.row_order,
     };
   }
 
   const childrenOf = {};
   for (const [propId, prop] of Object.entries(allProps)) {
-    const parent = prop.parent_id || null;
+    const parent = prop.parentId || null;
     if (!childrenOf[parent]) childrenOf[parent] = [];
     childrenOf[parent].push(propId);
   }
@@ -637,19 +640,19 @@ function getProperties() {
   const ordered = walkTree(null);
   const groups = {};
   for (const prop of ordered) {
-    const gid = prop.group_id;
+    const gid = prop.groupId;
     if (!groups[gid]) {
-      groups[gid] = { group_id: gid, group_name: prop.group_name, min_order: prop.row_order, properties: [] };
+      groups[gid] = { groupId: gid, groupName: prop.groupName, minOrder: prop.rowOrder, properties: [] };
     }
     groups[gid].properties.push({
-      id: prop.id, display_name: prop.display_name,
-      sort_direction: prop.sort_direction, is_summary: prop.is_summary,
-      parent_id: prop.parent_id, row_order: prop.row_order,
+      id: prop.id, displayName: prop.displayName,
+      sortDirection: prop.sortDirection, isSummary: prop.isSummary,
+      parentId: prop.parentId, rowOrder: prop.rowOrder,
     });
   }
 
-  return Object.values(groups).sort((a, b) => a.min_order - b.min_order).map(g => ({
-    group_id: g.group_id, group_name: g.group_name, properties: g.properties,
+  return Object.values(groups).sort((a, b) => a.minOrder - b.minOrder).map(g => ({
+    groupId: g.groupId, groupName: g.groupName, properties: g.properties,
   }));
 }
 
@@ -671,7 +674,7 @@ function getFilters() {
 
   return {
     missions, difficulties, modifiers,
-    time_range: { min: timeRange?.min_ts || 0, max: timeRange?.max_ts || 0 },
+    timeRange: { min: timeRange?.min_ts || 0, max: timeRange?.max_ts || 0 },
   };
 }
 
@@ -698,12 +701,12 @@ function getPlayers() {
     ORDER BY p.is_bot, p.id
   `).map(r => ({
     id: r.id,
-    is_bot: !!r.is_bot,
+    isBot: !!r.is_bot,
     names: r.names ? r.names.split(',') : [],
-    game_count: r.game_count || 0,
-    custom_name: r.custom_name || null,
+    gameCount: r.game_count || 0,
+    customName: r.custom_name || null,
     color: r.color || null,
-    is_main: !!r.is_main,
+    isMain: !!r.is_main,
   }));
 }
 
@@ -719,7 +722,7 @@ function getGames(params) {
   if (resultFilter === 'won') {
     conditions.push("g.result = 'won'");
   } else if (resultFilter === 'won_and_long_lost') {
-    conditions.push("(g.result = 'won' OR (g.result = 'lost' AND g.duration_seconds > 1200))");
+    conditions.push(`(g.result = 'won' OR (g.result = 'lost' AND g.duration_seconds > ${LONG_GAME_THRESHOLD_SECONDS}))`);
   } else if (resultFilter === 'lost') {
     conditions.push("g.result = 'lost'");
   }
@@ -804,12 +807,12 @@ function getGames(params) {
   return games.map(g => ({
     id: g.id,
     timestamp: g.timestamp,
-    mission_id: g.mission_id,
-    mission_name: g.mission_name,
+    missionId: g.mission_id,
+    missionName: g.mission_name,
     difficulty: g.difficulty,
     modifier: g.modifier,
     result: g.result,
-    duration_seconds: g.duration_seconds,
+    durationSeconds: g.duration_seconds,
     players: playersByGame[g.id] || {},
     scores: scoresByGame[g.id] || {},
   }));
@@ -1156,7 +1159,7 @@ function computePlayerGeneralStats(player, games, nameFilter) {
     if (!(player.id in game.scores)) continue;
     if (nameFilter && game.players[player.id] !== nameFilter) continue;
     totalGames++;
-    totalPlaytime += game.duration_seconds || 0;
+    totalPlaytime += game.durationSeconds || 0;
     if (game.result === 'won') {
       wonGames++;
       winStreak++;
@@ -1173,9 +1176,9 @@ function computePlayerGeneralStats(player, games, nameFilter) {
 
   return {
     playerId: player.id,
-    name: player.custom_name || player.names[0] || player.id,
+    name: player.customName || player.names[0] || player.id,
     color: player.color || '#888',
-    isMain: player.is_main,
+    isMain: player.isMain,
     totalGames,
     wonGames,
     winRate,
@@ -1196,9 +1199,9 @@ function computePlayerStats(player, games, propertyId, sortAscending, normalizeP
     const playerValue = game.scores[player.id]?.[propertyId];
     if (playerValue == null) continue;
 
-    const displayValue = normalizeValue(playerValue, game.duration_seconds, normalizePerMinute);
+    const displayValue = normalizeValue(playerValue, game.durationSeconds, normalizePerMinute);
     values.push({ value: displayValue, gameMean: gameMeans[i] });
-    bestFlags.push(gameBests[i] != null && Math.abs(displayValue - gameBests[i]) < 1e-9);
+    bestFlags.push(gameBests[i] != null && Math.abs(displayValue - gameBests[i]) < FLOAT_EPSILON);
   }
 
   const total = values.length;
@@ -1214,9 +1217,9 @@ function computePlayerStats(player, games, propertyId, sortAscending, normalizeP
 
   return {
     playerId: player.id,
-    name: player.custom_name || player.names[0] || player.id,
+    name: player.customName || player.names[0] || player.id,
     color: player.color || '#888',
-    isMain: player.is_main,
+    isMain: player.isMain,
     average,
     bestCount,
     bestTotal: total,
@@ -1237,7 +1240,7 @@ function precomputeGameAverages(games, propertyId, normalizePerMinute, excludePl
 
 /** Normalize a raw score and optionally convert to % deviation from game mean. */
 function computePointValue(rawValue, game, normalizePerMinute, vsAverage, gameMean) {
-  const value = normalizeValue(rawValue, game.duration_seconds, normalizePerMinute);
+  const value = normalizeValue(rawValue, game.durationSeconds, normalizePerMinute);
   if (vsAverage) {
     return gameMean !== 0 ? ((value - gameMean) / gameMean) * 100 : 0;
   }
@@ -1286,12 +1289,12 @@ function buildScatterPlayerDatasets(options) {
         gameIndex,
         gameId: game.id,
         timestamp: game.timestamp,
-        missionName: game.mission_name,
+        missionName: game.missionName,
         difficulty: game.difficulty,
         result: game.result,
         playerNameInGame: game.players[playerId] || 'Unknown',
         rawValue,
-        duration: game.duration_seconds,
+        duration: game.durationSeconds,
       });
     }
 
@@ -1595,8 +1598,8 @@ function createTooltipHandler(propertyIds, propertyMap, settingsMap, isBarMode, 
     for (const propertyIndex of Object.keys(groupedByProperty).map(Number).sort((a, b) => a - b)) {
       const propertyId = propertyIds[propertyIndex];
       const metadata = propertyMap[propertyId];
-      const propertyName = metadata?.display_name || propertyId;
-      const sortAscending = metadata?.sort_direction === 'ASC';
+      const propertyName = metadata?.displayName || propertyId;
+      const sortAscending = metadata?.sortDirection === 'ASC';
 
       const sortedGroup = groupedByProperty[propertyIndex].sort((a, b) => {
         const valueA = isBarMode ? a.raw : a.raw.y;
@@ -1626,7 +1629,7 @@ function createTooltipHandler(propertyIds, propertyMap, settingsMap, isBarMode, 
           } else if (games && gameInfo.gameIndex >= 0 && info.playerId) {
             const game = games[gameInfo.gameIndex];
             const rv = game?.scores[info.playerId]?.[propertyId];
-            actualValue = rv != null ? normalizeValue(rv, game.duration_seconds, normalizePerMinute) : null;
+            actualValue = rv != null ? normalizeValue(rv, game.durationSeconds, normalizePerMinute) : null;
           }
           const pctValue = info.value;
           const pctSign = pctValue > 0 ? '+' : '';
@@ -1757,7 +1760,7 @@ function useFilters() {
     const map = {};
     for (const group of propertyGroups.value) {
       for (const property of group.properties) {
-        map[property.id] = { ...property, group_id: group.group_id, group_name: group.group_name };
+        map[property.id] = { ...property, groupId: group.groupId, groupName: group.groupName };
       }
     }
     return map;
@@ -1766,7 +1769,7 @@ function useFilters() {
   const selectedPropertyNames = computed(() => {
     if (selectedPropertyIds.value.length === 0) return 'Select property...';
     return selectedPropertyIds.value
-      .map(id => propertyMap.value[id]?.display_name || id)
+      .map(id => propertyMap.value[id]?.displayName || id)
       .join(', ');
   });
 
@@ -1797,9 +1800,9 @@ function useFilters() {
       let depth = 0;
       let current = id;
       const seen = new Set();
-      while (map[current]?.parent_id && map[map[current].parent_id] && !seen.has(current)) {
+      while (map[current]?.parentId && map[map[current].parentId] && !seen.has(current)) {
         seen.add(current);
-        current = map[current].parent_id;
+        current = map[current].parentId;
         depth++;
       }
       depths[id] = depth;
@@ -1949,18 +1952,13 @@ function useFilters() {
   }
 
   const debouncedLoadGames = debounce(loadGames, 300);
-  watch(
-    [selectedPropertyIds, rangeMode, customStartDate, customEndDate,
-     lastNGames, resultFilter, selectedDifficulties, selectedMissions, selectedModifiers],
-    debouncedLoadGames,
-    { deep: true }
-  );
 
-  // Persist all filter settings on change (skip the initial restore trigger).
+  // Load games on any filter change; also persist filter settings (skipping the initial restore trigger).
   watch(
     [selectedPropertyIds, rangeMode, customStartDate, customEndDate,
      lastNGames, resultFilter, selectedDifficulties, selectedMissions, selectedModifiers],
     () => {
+      debouncedLoadGames();
       if (skipFilterSave) { skipFilterSave = false; return; }
       saveAppSetting('selected_properties', JSON.stringify(selectedPropertyIds.value));
       saveAppSetting('range_mode', rangeMode.value);
@@ -2015,26 +2013,26 @@ function usePlayerManagement() {
   });
 
   const trackedPlayers = computed(() =>
-    allPlayers.value.filter(player => player.custom_name || player.color)
+    allPlayers.value.filter(player => player.customName || player.color)
   );
 
   const humanPlayers = computed(() =>
     allPlayers.value
-      .filter(player => !player.is_bot && (player.game_count || 0) >= minGamesFilter.value)
+      .filter(player => !player.isBot && (player.gameCount || 0) >= minGamesFilter.value)
       .sort((a, b) => {
-        const aTracked = a.custom_name || a.color ? 0 : 1;
-        const bTracked = b.custom_name || b.color ? 0 : 1;
+        const aTracked = a.customName || a.color ? 0 : 1;
+        const bTracked = b.customName || b.color ? 0 : 1;
         if (aTracked !== bTracked) return aTracked - bTracked;
-        return (b.game_count || 0) - (a.game_count || 0);
+        return (b.gameCount || 0) - (a.gameCount || 0);
       })
   );
 
   const playerSettingsMap = computed(() => {
     const map = {};
     for (const player of allPlayers.value) {
-      if (player.custom_name || player.color) {
+      if (player.customName || player.color) {
         map[player.id] = {
-          name: player.custom_name || player.names[0] || player.id,
+          name: player.customName || player.names[0] || player.id,
           color: player.color || '#888',
         };
       }
@@ -2048,9 +2046,9 @@ function usePlayerManagement() {
 
   function initPlayerEdits() {
     for (const player of allPlayers.value) {
-      if (player.custom_name || player.color) {
+      if (player.customName || player.color) {
         playerEdits[player.id] = {
-          custom_name: player.custom_name || '',
+          customName: player.customName || '',
           color: player.color || '#888888',
         };
       }
@@ -2058,14 +2056,14 @@ function usePlayerManagement() {
   }
 
   function updatePlayerEdit(playerId, field, value) {
-    if (!playerEdits[playerId]) playerEdits[playerId] = { custom_name: '', color: '#888888' };
+    if (!playerEdits[playerId]) playerEdits[playerId] = { customName: '', color: '#888888' };
     playerEdits[playerId][field] = value;
   }
 
   function savePlayerSettingsAction(playerId) {
     const edit = playerEdits[playerId];
     if (!edit) return;
-    savePlayerSettingsDB(playerId, edit.custom_name || null, edit.color || null);
+    savePlayerSettingsDB(playerId, edit.customName || null, edit.color || null);
     loadPlayers();
   }
 
@@ -2096,8 +2094,8 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
   const normalizePerMinute = ref(false);
   const showVsAverage = ref(false);
   const showVsOthers = ref(false);
-  const hasMainPlayer = computed(() => trackedPlayers.value.some(p => p.is_main));
-  const mainPlayerId = computed(() => trackedPlayers.value.find(p => p.is_main)?.id ?? null);
+  const hasMainPlayer = computed(() => trackedPlayers.value.some(p => p.isMain));
+  const mainPlayerId = computed(() => trackedPlayers.value.find(p => p.isMain)?.id ?? null);
   const hideUnnamed = ref(false);
   const hideBots = ref(true);
   const chartMode = ref('line');
@@ -2128,6 +2126,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
   }
 
   let chartInstance = null;
+  let lastChartType = null;
 
   // Grey color assignment for untracked players
   const greyColorMap = new Map();
@@ -2193,7 +2192,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
     });
     const maxGames = Math.max(...gameCounts);
     if (maxGames === 0) return null;
-    let mainIdx = tp.findIndex(p => p.is_main);
+    let mainIdx = tp.findIndex(p => p.isMain);
     if (mainIdx === -1) {
       mainIdx = gameCounts.indexOf(maxGames);
     }
@@ -2214,8 +2213,8 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
       }
       if (together > 0) {
         togetherPairs.push({
-          nameA: main.custom_name || main.names[0] || main.id,
-          nameB: other.custom_name || other.names[0] || other.id,
+          nameA: main.customName || main.names[0] || main.id,
+          nameB: other.customName || other.names[0] || other.id,
           colorA: main.color || '#888',
           colorB: other.color || '#888',
           gamesTogether: together,
@@ -2239,8 +2238,8 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
       }
       if (apart > 0) {
         apartPairs.push({
-          nameA: main.custom_name || main.names[0] || main.id,
-          nameB: other.custom_name || other.names[0] || other.id,
+          nameA: main.customName || main.names[0] || main.id,
+          nameB: other.customName || other.names[0] || other.id,
           colorA: main.color || '#888',
           colorB: other.color || '#888',
           gamesApart: apart,
@@ -2251,11 +2250,14 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
     return { togetherPairs, apartPairs };
   });
 
+  // Note: precomputeGameAverages and precomputeGameBests are called per-property inside this
+  // computed because they depend on propertyId and normalizePerMinute. They cannot be hoisted
+  // outside the loop without duplicating the dependency tracking logic.
   const statsData = computed(() => {
     if (games.value.length === 0 || trackedPlayers.value.length === 0) return [];
     return selectedPropertyIds.value.map(propertyId => {
       const propertyMeta = propertyMap.value[propertyId];
-      const sortAscending = propertyMeta?.sort_direction === 'ASC';
+      const sortAscending = propertyMeta?.sortDirection === 'ASC';
       const gameMeans = showVsOthers.value && mainPlayerId.value
         ? precomputeGameAverages(games.value, propertyId, normalizePerMinute.value, mainPlayerId.value)
         : games.value.map(game => computeGameMean(game, propertyId, normalizePerMinute.value));
@@ -2296,7 +2298,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
       }
       return {
         propertyId,
-        propertyName: propertyMeta?.display_name || propertyId,
+        propertyName: propertyMeta?.displayName || propertyId,
         sortAscending,
         players,
       };
@@ -2349,7 +2351,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
     for (let propertyIndex = 0; propertyIndex < propertyIds.length; propertyIndex++) {
       const propertyId = propertyIds[propertyIndex];
       const propertyMeta = propertyMap.value[propertyId];
-      const propertyLabel = propertyMeta?.display_name || propertyId;
+      const propertyLabel = propertyMeta?.displayName || propertyId;
 
       const builderOptions = {
         games: currentGames, propertyId, propertyIndex, propertyLabel,
@@ -2374,18 +2376,15 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
     const labels = isBarMode ? currentGames.map((_, index) => index.toString()) : [];
     const gameMetadata = isBarMode
       ? currentGames.map(game => ({
-          timestamp: game.timestamp, missionName: game.mission_name,
-          difficulty: game.difficulty, result: game.result, duration: game.duration_seconds,
+          timestamp: game.timestamp, missionName: game.missionName,
+          difficulty: game.difficulty, result: game.result, duration: game.durationSeconds,
         }))
       : [];
 
     return { datasets, bands, labels, gameMetadata, currentGames };
   }
 
-  function renderChart() {
-    const canvas = chartCanvas.value;
-    if (!canvas) return;
-
+  function buildChartConfig() {
     const { datasets, bands, labels, gameMetadata, currentGames } = buildChartData();
     const settings = playerSettingsMap.value;
     const propertyIds = selectedPropertyIds.value;
@@ -2440,9 +2439,10 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
           },
         };
 
-    if (chartInstance) chartInstance.destroy();
-    chartInstance = new Chart(canvas.getContext('2d'), {
-      type: isBarMode ? 'bar' : 'scatter',
+    const chartType = isBarMode ? 'bar' : 'scatter';
+
+    return {
+      type: chartType,
       data: { labels: isBarMode ? labels : undefined, datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
@@ -2478,7 +2478,24 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
         },
         scales: { x: xAxisConfig, ...yAxisConfig },
       },
-    });
+    };
+  }
+
+  function renderChart() {
+    const canvas = chartCanvas.value;
+    if (!canvas) return;
+
+    const config = buildChartConfig();
+
+    if (chartInstance && lastChartType === config.type) {
+      chartInstance.data = config.data;
+      chartInstance.options = config.options;
+      chartInstance.update();
+    } else {
+      if (chartInstance) chartInstance.destroy();
+      lastChartType = config.type;
+      chartInstance = new Chart(canvas.getContext('2d'), config);
+    }
   }
 
   watch(
@@ -2492,6 +2509,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
 
   onUnmounted(() => {
     if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    lastChartType = null;
   });
 
   function deviationClass(deviation, sortAscending) {
@@ -2652,7 +2670,7 @@ const app = createApp({
       window.removeEventListener('keydown', onEscape);
     });
 
-    const isWindows = true; //navigator.userAgent.indexOf('Win') !== -1;
+    const isWindows = navigator.userAgent.indexOf('Win') !== -1;
     const showPathHint = ref(false);
 
     function showPathHintOverlay(action) {
@@ -2672,10 +2690,76 @@ const app = createApp({
     watch(ingestion.ingesting, (v) => { if (v) showPathHint.value = false; });
 
     return {
-      ...filters,
-      ...playerMgmt,
-      ...chart,
-      // Ingestion (wrapped with callbacks)
+      // ── Filters ──
+      propertyGroups: filters.propertyGroups,
+      availableMissions: filters.availableMissions,
+      availableDifficulties: filters.availableDifficulties,
+      availableModifiers: filters.availableModifiers,
+      difficultyNames: filters.difficultyNames,
+      selectedPropertyIds: filters.selectedPropertyIds,
+      rangeMode: filters.rangeMode,
+      customStartDate: filters.customStartDate,
+      customEndDate: filters.customEndDate,
+      lastNGames: filters.lastNGames,
+      resultFilter: filters.resultFilter,
+      selectedDifficulties: filters.selectedDifficulties,
+      selectedMissions: filters.selectedMissions,
+      selectedModifiers: filters.selectedModifiers,
+      games: filters.games,
+      loading: filters.loading,
+      loadGeneration: filters.loadGeneration,
+      errorMessage: filters.errorMessage,
+      gameCountDisplay: filters.gameCountDisplay,
+      propertyMap: filters.propertyMap,
+      selectedPropertyNames: filters.selectedPropertyNames,
+      difficultyLabel: filters.difficultyLabel,
+      missionLabel: filters.missionLabel,
+      modifierLabel: filters.modifierLabel,
+      propertyDepth: filters.propertyDepth,
+      propertyLevelColor: filters.propertyLevelColor,
+      removeProperty: filters.removeProperty,
+      loadInitialData: filters.loadInitialData,
+      loadGames: filters.loadGames,
+
+      // ── Player management ──
+      allPlayers: playerMgmt.allPlayers,
+      showPlayerDialog: playerMgmt.showPlayerDialog,
+      playerEdits: playerMgmt.playerEdits,
+      minGamesFilter: playerMgmt.minGamesFilter,
+      trackedPlayers: playerMgmt.trackedPlayers,
+      humanPlayers: playerMgmt.humanPlayers,
+      playerSettingsMap: playerMgmt.playerSettingsMap,
+      loadPlayers: playerMgmt.loadPlayers,
+      initPlayerEdits: playerMgmt.initPlayerEdits,
+      restorePlayerSettings: playerMgmt.restorePlayerSettings,
+      updatePlayerEdit: playerMgmt.updatePlayerEdit,
+      savePlayerSettings: playerMgmt.savePlayerSettings,
+      clearPlayerSettings: playerMgmt.clearPlayerSettings,
+      setMainPlayer: playerMgmt.setMainPlayer,
+
+      // ── Chart ──
+      chartCanvas: chart.chartCanvas,
+      normalizePerMinute: chart.normalizePerMinute,
+      showVsAverage: chart.showVsAverage,
+      showVsOthers: chart.showVsOthers,
+      hasMainPlayer: chart.hasMainPlayer,
+      hideUnnamed: chart.hideUnnamed,
+      hideBots: chart.hideBots,
+      chartMode: chart.chartMode,
+      xAxisMode: chart.xAxisMode,
+      effectiveXAxisMode: chart.effectiveXAxisMode,
+      perName: chart.perName,
+      hiddenLegendProperties: chart.hiddenLegendProperties,
+      showWinRate: chart.showWinRate,
+      showStreaks: chart.showStreaks,
+      generalStatsData: chart.generalStatsData,
+      relativeStatsData: chart.relativeStatsData,
+      statsData: chart.statsData,
+      renderChart: chart.renderChart,
+      restoreChartSettings: chart.restoreChartSettings,
+      deviationClass: chart.deviationClass,
+
+      // ── Ingestion (wrapped with callbacks) ──
       dbReady: ingestion.dbReady,
       ingesting: ingestion.ingesting,
       ingestProgress: ingestion.ingestProgress,
@@ -2692,10 +2776,12 @@ const app = createApp({
         await clearAppSettings();
         location.reload();
       },
-      // Dropdown
+
+      // ── Dropdown ──
       openDropdown,
       toggleDropdown,
-      // Utilities
+
+      // ── Utilities ──
       groupColor,
       formatNum: formatNumber,
       formatDuration,
