@@ -25,14 +25,14 @@
   <!-- Ingestion bar -->
   <div class="ingest-bar">
     <template v-if="hasNativeAccess">
-      <button @click="pickDirectory" :disabled="ingesting || !dbReady">
+      <button @click="pickDirectory" :disabled="ingesting || !dbReady" :class="{ 'pulse-red': gameCountDisplay === 0 }">
         {{ dirHandle ? 'Change Directory' : 'Choose Scoreboard Directory' }}
       </button>
       <button v-if="dirHandle" @click="reingest" :disabled="ingesting">
         Re-scan Files
       </button>
     </template>
-    <button v-else @click="pickFiles" :disabled="ingesting || !dbReady">
+    <button v-else @click="pickFiles" :disabled="ingesting || !dbReady" :class="{ 'pulse-red': gameCountDisplay === 0 }">
       Import Scoreboard Files
     </button>
     <span v-if="!hasNativeAccess" class="fallback-warning tooltip-wrap tooltip-below"

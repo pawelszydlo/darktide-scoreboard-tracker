@@ -52,6 +52,17 @@ body {
 .ingest-bar .btn-danger:hover {
   background: #d62040;
 }
+@keyframes pulse-red {
+  0%, 100% { background: var(--bg3); }
+  50% { background: var(--red); }
+}
+.pulse-red {
+  animation: pulse-red 1.5s ease-in-out infinite;
+}
+.pulse-red:hover {
+  animation: none;
+}
+
 .fallback-warning {
   color: #ffcc00;
   font-size: 18px;
