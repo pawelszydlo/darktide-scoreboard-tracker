@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Darktide Scoreboard Tracker</title>
+<title>Darktide Scoreboard Tracker 1.0</title>
 <script src="https://unpkg.com/vue@3.4.21/dist/vue.global.prod.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1" integrity="sha384-oNtu+d18330MVFpltUTve1DatxCkkctlpA2AC3GulbVFOSqhHdDat3qHse/Lbuek" crossorigin="anonymous"></script>
@@ -29,7 +29,8 @@
       data-tooltip="Your browser does not support the File System Access API. Automatic re-scanning is not available. Use Chrome, Opera, or Edge for full functionality.">&#9888;</span>
     <span class="game-count">{{ gameCountDisplay }} games in database</span>
     <span v-if="ingestProgress" class="progress-text">{{ ingestProgress }}</span>
-    <button class="btn-danger ml-auto" @click="resetDatabase" :disabled="ingesting">Reset DB</button>
+    <button class="btn-danger ml-auto" @click="resetSettings">Reset Settings</button>
+    <button class="btn-danger" @click="resetDatabase" :disabled="ingesting">Reset DB</button>
   </div>
 
   <!-- Controls -->
@@ -154,12 +155,33 @@
   <div class="stats-box" v-if="(generalStatsData || statsData.length > 0) && trackedPlayers.length > 0">
     <div class="stat-card" v-if="generalStatsData">
       <div class="stat-card-title">General</div>
-      <div v-for="playerStat in generalStatsData.players" :key="playerStat.playerId" class="stat-player-row">
-        <div class="stat-color-dot" :style="{background: playerStat.color}"></div>
+      <div v-for="(playerStat, idx) in generalStatsData.players" :key="playerStat.playerId + '-' + idx"
+        :class="['stat-player-row', { 'stat-sub-row': playerStat._isSubName }]">
+        <div class="stat-color-dot" :style="{background: playerStat._isSubName ? playerStat._parentColor : playerStat.color}"></div>
         <span class="stat-name">{{ playerStat.name }}</span>
+        <span class="stat-value" :data-tooltip="'Total playtime: ' + formatDuration(playerStat.totalPlaytime)">Time: {{ formatDuration(playerStat.totalPlaytime) }}</span>
         <span class="stat-value">Games: {{ playerStat.totalGames }}</span>
-        <span class="stat-value" v-if="showWinRate"
-          :data-tooltip="'Won ' + playerStat.wonGames + ' out of ' + playerStat.totalGames + ' games'">Win rate: {{ playerStat.winRate }}%</span>
+        <span class="stat-value stat-win-rate" v-if="showWinRate"
+          :data-tooltip="'Won ' + playerStat.wonGames + ' out of ' + playerStat.totalGames + ' games. Win rate: ' + playerStat.winRate + '%'">W&#8209;rate: {{ playerStat.winRate }}%</span>
+        <span class="stat-value stat-win-streak" :data-tooltip="'Winning streak: ' + playerStat.winStreak + ' games'">W&#8209;strk: {{ playerStat.winStreak }}</span>
+        <span class="stat-value stat-loss-streak" :data-tooltip="'Losing streak: ' + playerStat.lossStreak + ' games'">L&#8209;strk: {{ playerStat.lossStreak }}</span>
+      </div>
+    </div>
+    <div class="stat-card" v-if="relativeStatsData && (relativeStatsData.togetherPairs.length > 0 || relativeStatsData.apartPairs.length > 0)">
+      <div class="stat-card-title">Relative</div>
+      <div v-for="(pair, idx) in relativeStatsData.togetherPairs" :key="'together-' + idx" class="stat-player-row">
+        <div class="stat-color-dot" :style="{background: pair.colorA}"></div>
+        <div class="stat-color-dot" :style="{background: pair.colorB}"></div>
+        <span class="stat-name">{{ pair.nameA }} + {{ pair.nameB }}</span>
+        <span class="stat-value" :data-tooltip="'Played ' + pair.gamesTogether + ' games together'">Together: {{ pair.gamesTogether }}</span>
+        <span class="stat-value" v-if="showWinRate" :data-tooltip="'Win rate together: ' + pair.winRateTogether + '%'">W&#8209;rate: {{ pair.winRateTogether }}%</span>
+      </div>
+      <div v-for="(pair, idx) in relativeStatsData.apartPairs" :key="'apart-' + idx" class="stat-player-row">
+        <div class="stat-color-dot" :style="{background: pair.colorA}"></div>
+        <div class="stat-color-dot" :style="{background: pair.colorB}"></div>
+        <span class="stat-name">{{ pair.nameA }} &#8209; {{ pair.nameB }}</span>
+        <span class="stat-value" :data-tooltip="'Played ' + pair.gamesApart + ' games apart'">Apart: {{ pair.gamesApart }}</span>
+        <span class="stat-value" v-if="showWinRate" :data-tooltip="'Win rate apart: ' + pair.winRateApart + '%'">W&#8209;rate: {{ pair.winRateApart }}%</span>
       </div>
     </div>
     <div class="stat-card" v-for="stat in statsData" :key="stat.propertyId">
@@ -168,8 +190,9 @@
         <span class="stat-card-close" role="button" aria-label="Remove property"
           @click="removeProperty(stat.propertyId)">&times;</span>
       </div>
-      <div v-for="playerStat in stat.players" :key="playerStat.playerId" class="stat-player-row">
-        <div class="stat-color-dot" :style="{background: playerStat.color}"></div>
+      <div v-for="(playerStat, idx) in stat.players" :key="playerStat.playerId + '-' + idx"
+        :class="['stat-player-row', { 'stat-sub-row': playerStat._isSubName }]">
+        <div class="stat-color-dot" :style="{background: playerStat._isSubName ? playerStat._parentColor : playerStat.color}"></div>
         <span class="stat-name">{{ playerStat.name }}</span>
         <span class="stat-value">Avg: {{ formatNum(playerStat.average) }}</span>
         <span class="stat-value stat-top-in"
@@ -184,8 +207,11 @@
 
   <!-- Graph toggles -->
   <div class="graph-toggles" v-if="dbReady">
+    <button class="toggle-btn" :class="{on: perName}"
+      @click="perName = !perName">Per name</button>
     <button class="toggle-btn" :class="{on: normalizePerMinute}"
       @click="normalizePerMinute = !normalizePerMinute">Per minute</button>
+    <span class="toggle-spacer"></span>
     <button class="toggle-btn" :class="{on: showVsAverage}"
       @click="showVsAverage = !showVsAverage">vs Average</button>
     <button class="toggle-btn" :class="{on: hideUnnamed}"

@@ -10,6 +10,12 @@
   --border: #333;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
+#app {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--bg);
@@ -257,6 +263,17 @@ button.active { background: var(--accent); }
 .stat-value.positive { color: var(--green); }
 .stat-value.negative { color: var(--red); }
 .stat-top-in { color: #ffd700; }
+.stat-sub-row {
+  padding-left: 16px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+.stat-sub-row .stat-color-dot {
+  width: 6px;
+  height: 6px;
+}
+.stat-win-rate, .stat-win-streak { color: var(--green); }
+.stat-loss-streak { color: var(--red); }
 
 .graph-toggles {
   padding: 6px 16px;
@@ -266,7 +283,9 @@ button.active { background: var(--accent); }
   display: flex;
   gap: 6px;
   align-items: center;
-  justify-content: flex-end;
+}
+.toggle-spacer {
+  flex: 1;
 }
 
 .chart-container {

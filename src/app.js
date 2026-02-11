@@ -79,6 +79,24 @@ function formatNumber(value) {
   return Number.isInteger(value) ? value.toString() : value.toFixed(1);
 }
 
+/** Format seconds into human-readable duration: "XXm", "XhYm", or "XdYhZm". */
+function formatDuration(seconds) {
+  if (seconds == null || seconds <= 0) return '0m';
+  if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+  if (seconds < 86400) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.round((seconds % 3600) / 60);
+    return minutes > 0 ? hours + 'h' + minutes + 'm' : hours + 'h';
+  }
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.round((seconds % 3600) / 60);
+  let result = days + 'd';
+  if (hours > 0) result += hours + 'h';
+  if (minutes > 0) result += minutes + 'm';
+  return result;
+}
+
 /** Convert a raw score to per-minute rate when normalization is enabled. */
 function normalizeValue(rawValue, durationSeconds, shouldNormalize) {
   if (!shouldNormalize || durationSeconds <= 0) return rawValue;
@@ -800,6 +818,12 @@ function getAppSetting(key) {
   return row ? row.value : null;
 }
 
+/** Delete all rows from app_settings. */
+async function clearAppSettings() {
+  runStatement('DELETE FROM app_settings', []);
+  await saveDatabase();
+}
+
 /** If no players are tracked yet, auto-setup the most frequent human player as "Me". */
 function autoSetupDefaultPlayer() {
   const hasTracked = queryOne('SELECT 1 FROM player_settings WHERE custom_name IS NOT NULL OR color IS NOT NULL');
@@ -1082,14 +1106,28 @@ async function ingestFiles(source, progressCallback) {
 // ── Statistics ─────────────────────────────────────────────────────
 
 /** Compute win/loss summary stats for a tracked player across filtered games. */
-function computePlayerGeneralStats(player, games) {
+function computePlayerGeneralStats(player, games, nameFilter) {
   let totalGames = 0;
   let wonGames = 0;
+  let totalPlaytime = 0;
+  let winStreak = 0, maxWinStreak = 0;
+  let lossStreak = 0, maxLossStreak = 0;
 
   for (const game of games) {
     if (!(player.id in game.scores)) continue;
+    if (nameFilter && game.players[player.id] !== nameFilter) continue;
     totalGames++;
-    if (game.result === 'won') wonGames++;
+    totalPlaytime += game.duration_seconds || 0;
+    if (game.result === 'won') {
+      wonGames++;
+      winStreak++;
+      lossStreak = 0;
+      if (winStreak > maxWinStreak) maxWinStreak = winStreak;
+    } else {
+      lossStreak++;
+      winStreak = 0;
+      if (lossStreak > maxLossStreak) maxLossStreak = lossStreak;
+    }
   }
 
   const winRate = totalGames > 0 ? Math.round(wonGames / totalGames * 100) : 0;
@@ -1101,16 +1139,20 @@ function computePlayerGeneralStats(player, games) {
     totalGames,
     wonGames,
     winRate,
+    totalPlaytime,
+    winStreak: maxWinStreak,
+    lossStreak: maxLossStreak,
   };
 }
 
 /** Compute per-property stats (average, best count, deviation) for a tracked player. */
-function computePlayerStats(player, games, propertyId, sortAscending, normalizePerMinute, gameMeans, gameBests) {
+function computePlayerStats(player, games, propertyId, sortAscending, normalizePerMinute, gameMeans, gameBests, nameFilter) {
   const values = [];
   const bestFlags = [];
 
   for (let i = 0; i < games.length; i++) {
     const game = games[i];
+    if (nameFilter && game.players[player.id] !== nameFilter) continue;
     const playerValue = game.scores[player.id]?.[propertyId];
     if (playerValue == null) continue;
 
@@ -1164,22 +1206,21 @@ function buildScatterPlayerDatasets(options) {
     games, propertyId, propertyIndex, propertyLabel, allPlayerIds,
     trackedIds, settingsMap, greyColorMap, selectedPropertyCount,
     hideBots, hideUnnamed, normalizePerMinute, vsAverage, xAxisMode,
+    perName, trackedPlayers, hiddenLegendProperties,
   } = options;
 
   const useSecondAxis = !vsAverage && selectedPropertyCount > 1;
   const gameMeans = vsAverage ? precomputeGameAverages(games, propertyId, normalizePerMinute) : null;
   const datasets = [];
-  for (const playerId of allPlayerIds) {
-    if (hideBots && playerId.startsWith('bot_')) continue;
-    const isTracked = trackedIds.has(playerId);
-    if (hideUnnamed && !isTracked) continue;
-    const settings = settingsMap[playerId];
-    const color = settings ? settings.color : greyColorMap.get(playerId);
+
+  /** Build a single scatter dataset for a player, optionally filtered by name. */
+  function buildOneDataset(playerId, isTracked, color, label, shiftIndex, nameFilter) {
     const dataPoints = [];
     let lastGameIndex = -2;
 
     for (let gameIndex = 0; gameIndex < games.length; gameIndex++) {
       const game = games[gameIndex];
+      if (nameFilter && game.players[playerId] !== nameFilter) continue;
       const rawValue = game.scores[playerId]?.[propertyId];
       if (rawValue == null) continue;
 
@@ -1208,16 +1249,13 @@ function buildScatterPlayerDatasets(options) {
       });
     }
 
-    if (dataPoints.length === 0) continue;
+    if (dataPoints.length === 0) return;
 
-    const playerLabel = settings?.name || '';
-    const datasetLabel = selectedPropertyCount > 1
-      ? `${playerLabel} - ${propertyLabel}` : playerLabel;
-    const shiftedColor = shiftColor(color, propertyIndex);
-
+    const isPropertyHidden = hiddenLegendProperties && hiddenLegendProperties.has(propertyId);
+    const shiftedColor = shiftColor(color, shiftIndex);
     datasets.push({
-      label: datasetLabel,
-      data: dataPoints,
+      label,
+      data: isPropertyHidden ? [] : dataPoints,
       borderColor: shiftedColor,
       backgroundColor: shiftedColor,
       pointRadius: 3,
@@ -1226,12 +1264,44 @@ function buildScatterPlayerDatasets(options) {
       showLine: true,
       spanGaps: false,
       tension: 0,
+      hidden: isPropertyHidden,
       yAxisID: useSecondAxis && propertyIndex > 0 ? 'y1' : 'y',
       order: isTracked ? 0 : 1,
       _isTracked: isTracked,
+      _propertyId: propertyId,
       _propertyIndex: propertyIndex,
       _playerId: playerId,
     });
+  }
+
+  for (const playerId of allPlayerIds) {
+    if (hideBots && playerId.startsWith('bot_')) continue;
+    const isTracked = trackedIds.has(playerId);
+    if (hideUnnamed && !isTracked) continue;
+    const settings = settingsMap[playerId];
+    const color = settings ? settings.color : greyColorMap.get(playerId);
+
+    if (perName && isTracked) {
+      // Collect distinct names used by this player across the current games
+      const nameSet = new Set();
+      for (const game of games) {
+        const n = game.players[playerId];
+        if (n && playerId in game.scores) nameSet.add(n);
+      }
+      const names = [...nameSet].sort();
+      names.forEach((name, nameIndex) => {
+        const customName = settings?.name || '';
+        const namePart = `${name} (${customName})`;
+        const label = selectedPropertyCount > 1
+          ? `${namePart} - ${propertyLabel}` : namePart;
+        buildOneDataset(playerId, true, color, label, propertyIndex + nameIndex + 1, name);
+      });
+    } else {
+      const playerLabel = settings?.name || '';
+      const datasetLabel = selectedPropertyCount > 1
+        ? `${playerLabel} - ${propertyLabel}` : playerLabel;
+      buildOneDataset(playerId, isTracked, color, datasetLabel, propertyIndex, null);
+    }
   }
   return datasets;
 }
@@ -1242,6 +1312,7 @@ function buildBarPlayerDatasets(options) {
     games, propertyId, propertyIndex, propertyLabel, allPlayerIds,
     trackedIds, settingsMap, greyColorMap, selectedPropertyCount,
     hideBots, hideUnnamed, normalizePerMinute, vsAverage, hiddenLegendProperties,
+    perName,
   } = options;
 
   const useSecondAxis = !vsAverage && selectedPropertyCount > 1;
@@ -1327,20 +1398,47 @@ function buildBarPlayerDatasets(options) {
   for (const playerId of allPlayerIds) {
     const playerSettings = settingsMap[playerId];
     if (!playerSettings) continue;
-    const shiftedColor = shiftColor(playerSettings.color, propertyIndex);
-    const playerLabel = selectedPropertyCount > 1
-      ? `${playerSettings.name} - ${propertyLabel}` : playerSettings.name;
 
-    datasets.push({
-      label: playerLabel,
-      data: [],
-      backgroundColor: shiftedColor,
-      borderColor: shiftedColor,
-      hidden: hiddenLegendProperties && hiddenLegendProperties.has(propertyId),
-      _isTracked: true,
-      _propertyId: propertyId,
-      _propertyIndex: propertyIndex,
-    });
+    if (perName) {
+      // Collect distinct names used by this player across current games
+      const nameSet = new Set();
+      for (const game of games) {
+        const n = game.players[playerId];
+        if (n && playerId in game.scores) nameSet.add(n);
+      }
+      const names = [...nameSet].sort();
+      names.forEach((name, nameIndex) => {
+        const namePart = `${name} (${playerSettings.name})`;
+        const label = selectedPropertyCount > 1
+          ? `${namePart} - ${propertyLabel}` : namePart;
+        const shiftedColor = shiftColor(playerSettings.color, propertyIndex + nameIndex + 1);
+        datasets.push({
+          label,
+          data: [],
+          backgroundColor: shiftedColor,
+          borderColor: shiftedColor,
+          hidden: hiddenLegendProperties && hiddenLegendProperties.has(propertyId),
+          _isTracked: true,
+          _propertyId: propertyId,
+          _propertyIndex: propertyIndex,
+        });
+      });
+    } else {
+      const shiftedColor = shiftColor(playerSettings.color, propertyIndex);
+      const playerLabel = selectedPropertyCount > 1
+        ? `${playerSettings.name} - ${propertyLabel}` : playerSettings.name;
+
+      datasets.push({
+        label: playerLabel,
+        data: [],
+        backgroundColor: shiftedColor,
+        borderColor: shiftedColor,
+        hidden: hiddenLegendProperties && hiddenLegendProperties.has(propertyId),
+        _isTracked: true,
+        _propertyId: propertyId,
+        _propertyIndex: propertyIndex,
+      });
+    }
   }
 
   return datasets;
@@ -1562,7 +1660,7 @@ function useFilters() {
   const difficultyNames = ref({ ...DEFAULT_DIFFICULTY_NAMES });
 
   const selectedPropertyIds = ref(['actual_damage_dealt']);
-  let skipPropertySave = true;
+  let skipFilterSave = true;
 
   const rangeMode = ref('all');
   const customStartDate = ref('');
@@ -1661,6 +1759,7 @@ function useFilters() {
     }
     difficultyNames.value = names;
 
+    // Defaults
     selectedDifficulties.value = filters.difficulties.map(d => d.id);
     selectedMissions.value = filters.missions
       .filter(m => m.id !== 'psykhanium')
@@ -1668,7 +1767,8 @@ function useFilters() {
     selectedModifiers.value = [...filters.modifiers];
     gameCountDisplay.value = getGameCount();
 
-    // Restore persisted property selection (DB is ready at this point).
+    // Restore persisted filter settings (DB is ready at this point).
+    skipFilterSave = true;
     try {
       const raw = getAppSetting('selected_properties');
       if (raw) {
@@ -1676,10 +1776,52 @@ function useFilters() {
         if (Array.isArray(parsed) && parsed.length > 0) {
           const map = propertyMap.value;
           const valid = parsed.filter(id => id in map);
-          if (valid.length > 0) {
-            skipPropertySave = true;
-            selectedPropertyIds.value = valid;
-          }
+          if (valid.length > 0) selectedPropertyIds.value = valid;
+        }
+      }
+
+      const savedRange = getAppSetting('range_mode');
+      if (savedRange) rangeMode.value = savedRange;
+
+      const savedCustomStart = getAppSetting('custom_start_date');
+      if (savedCustomStart) customStartDate.value = savedCustomStart;
+
+      const savedCustomEnd = getAppSetting('custom_end_date');
+      if (savedCustomEnd) customEndDate.value = savedCustomEnd;
+
+      const savedLastN = getAppSetting('last_n_games');
+      if (savedLastN) lastNGames.value = Number(savedLastN);
+
+      const savedResult = getAppSetting('result_filter');
+      if (savedResult) resultFilter.value = savedResult;
+
+      const savedDiffs = getAppSetting('selected_difficulties');
+      if (savedDiffs) {
+        const parsed = JSON.parse(savedDiffs);
+        if (Array.isArray(parsed)) {
+          const allIds = new Set(filters.difficulties.map(d => d.id));
+          const valid = parsed.filter(id => allIds.has(id));
+          if (valid.length > 0) selectedDifficulties.value = valid;
+        }
+      }
+
+      const savedMissions = getAppSetting('selected_missions');
+      if (savedMissions) {
+        const parsed = JSON.parse(savedMissions);
+        if (Array.isArray(parsed)) {
+          const allIds = new Set(filters.missions.map(m => m.id));
+          const valid = parsed.filter(id => allIds.has(id));
+          if (valid.length > 0) selectedMissions.value = valid;
+        }
+      }
+
+      const savedModifiers = getAppSetting('selected_modifiers');
+      if (savedModifiers) {
+        const parsed = JSON.parse(savedModifiers);
+        if (Array.isArray(parsed)) {
+          const allIds = new Set(filters.modifiers);
+          const valid = parsed.filter(id => allIds.has(id));
+          if (valid.length > 0) selectedModifiers.value = valid;
         }
       }
     } catch { /* ignore corrupt data */ }
@@ -1738,11 +1880,24 @@ function useFilters() {
     { deep: true }
   );
 
-  // Persist selected properties on change (skip the initial load trigger).
-  watch(selectedPropertyIds, (ids) => {
-    if (skipPropertySave) { skipPropertySave = false; return; }
-    saveAppSetting('selected_properties', JSON.stringify(ids));
-  }, { deep: true });
+  // Persist all filter settings on change (skip the initial restore trigger).
+  watch(
+    [selectedPropertyIds, rangeMode, customStartDate, customEndDate,
+     lastNGames, resultFilter, selectedDifficulties, selectedMissions, selectedModifiers],
+    () => {
+      if (skipFilterSave) { skipFilterSave = false; return; }
+      saveAppSetting('selected_properties', JSON.stringify(selectedPropertyIds.value));
+      saveAppSetting('range_mode', rangeMode.value);
+      saveAppSetting('custom_start_date', customStartDate.value);
+      saveAppSetting('custom_end_date', customEndDate.value);
+      saveAppSetting('last_n_games', String(lastNGames.value));
+      saveAppSetting('result_filter', resultFilter.value);
+      saveAppSetting('selected_difficulties', JSON.stringify(selectedDifficulties.value));
+      saveAppSetting('selected_missions', JSON.stringify(selectedMissions.value));
+      saveAppSetting('selected_modifiers', JSON.stringify(selectedModifiers.value));
+    },
+    { deep: true }
+  );
 
   // Validate persisted property IDs once propertyMap is available.
   watch(propertyMap, (map) => {
@@ -1770,6 +1925,18 @@ function usePlayerManagement() {
   const showPlayerDialog = ref(false);
   const playerEdits = reactive({});
   const minGamesFilter = ref(3);
+
+  /** Restore persisted min games filter. Must be called after DB is ready. */
+  function restorePlayerSettings() {
+    try {
+      const saved = getAppSetting('min_games_filter');
+      if (saved) minGamesFilter.value = Number(saved);
+    } catch { /* ignore */ }
+  }
+
+  watch(minGamesFilter, (val) => {
+    saveAppSetting('min_games_filter', String(val));
+  });
 
   const trackedPlayers = computed(() =>
     allPlayers.value.filter(player => player.custom_name || player.color)
@@ -1835,7 +2002,7 @@ function usePlayerManagement() {
   return {
     allPlayers, showPlayerDialog, playerEdits, minGamesFilter,
     trackedPlayers, humanPlayers, playerSettingsMap,
-    loadPlayers, initPlayerEdits, updatePlayerEdit,
+    loadPlayers, initPlayerEdits, restorePlayerSettings, updatePlayerEdit,
     savePlayerSettings: savePlayerSettingsAction,
     clearPlayerSettings: clearPlayerSettingsAction,
   };
@@ -1850,7 +2017,29 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
   const hideBots = ref(true);
   const chartMode = ref('line');
   const xAxisMode = ref('time');
+  const perName = ref(false);
   const hiddenLegendProperties = reactive(new Set());
+
+  let skipToggleSave = true;
+
+  /** Restore persisted chart toggle settings. Must be called after DB is ready. */
+  function restoreChartSettings() {
+    skipToggleSave = true;
+    try {
+      const saved = getAppSetting('chart_toggles');
+      if (saved) {
+        const t = JSON.parse(saved);
+        if (t.normalizePerMinute != null) normalizePerMinute.value = t.normalizePerMinute;
+        if (t.showVsAverage != null) showVsAverage.value = t.showVsAverage;
+        if (t.hideUnnamed != null) hideUnnamed.value = t.hideUnnamed;
+        if (t.hideBots != null) hideBots.value = t.hideBots;
+        if (t.chartMode) chartMode.value = t.chartMode;
+        if (t.xAxisMode) xAxisMode.value = t.xAxisMode;
+        if (t.perName != null) perName.value = t.perName;
+      }
+    } catch { /* ignore corrupt data */ }
+    nextTick(() => { skipToggleSave = false; });
+  }
 
   let chartInstance = null;
 
@@ -1868,11 +2057,96 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
 
   const generalStatsData = computed(() => {
     if (games.value.length === 0 || trackedPlayers.value.length === 0) return null;
-    return {
-      players: trackedPlayers.value.map(player =>
-        computePlayerGeneralStats(player, games.value)
-      ),
-    };
+    // Build groups with parent and their sub-rows
+    const groups = [];
+    for (const player of trackedPlayers.value) {
+      const parent = computePlayerGeneralStats(player, games.value);
+      const group = { parent, subs: [] };
+      if (perName.value) {
+        const nameSet = new Set();
+        for (const game of games.value) {
+          const n = game.players[player.id];
+          if (n && player.id in game.scores) nameSet.add(n);
+        }
+        for (const name of [...nameSet].sort()) {
+          const sub = computePlayerGeneralStats(player, games.value, name);
+          sub.name = name;
+          sub._isSubName = true;
+          sub._parentColor = player.color || '#888';
+          group.subs.push(sub);
+        }
+      }
+      groups.push(group);
+    }
+    // Sort groups by parent's total games (descending)
+    groups.sort((a, b) => b.parent.totalGames - a.parent.totalGames);
+    // Flatten into players array
+    const players = [];
+    for (const group of groups) {
+      players.push(group.parent);
+      players.push(...group.subs);
+    }
+    return { players };
+  });
+
+  const relativeStatsData = computed(() => {
+    if (trackedPlayers.value.length < 2 || games.value.length === 0) return null;
+    const tp = trackedPlayers.value;
+    // Find main player (most games)
+    const gameCounts = tp.map(p => {
+      let count = 0;
+      for (const game of games.value) { if (p.id in game.scores) count++; }
+      return count;
+    });
+    const mainIdx = gameCounts.indexOf(Math.max(...gameCounts));
+    const main = tp[mainIdx];
+    // Together pairs: main player + each other player
+    const togetherPairs = [];
+    for (let i = 0; i < tp.length; i++) {
+      if (i === mainIdx) continue;
+      const other = tp[i];
+      let together = 0, wins = 0;
+      for (const game of games.value) {
+        if (main.id in game.scores && other.id in game.scores) {
+          together++;
+          if (game.result === 'won') wins++;
+        }
+      }
+      if (together > 0) {
+        togetherPairs.push({
+          nameA: main.custom_name || main.names[0] || main.id,
+          nameB: other.custom_name || other.names[0] || other.id,
+          colorA: main.color || '#888',
+          colorB: other.color || '#888',
+          gamesTogether: together,
+          winRateTogether: Math.round(wins / together * 100),
+        });
+      }
+    }
+    // Apart pairs: main player without each other player
+    const apartPairs = [];
+    for (let i = 0; i < tp.length; i++) {
+      if (i === mainIdx) continue;
+      const other = tp[i];
+      let apart = 0, wins = 0;
+      for (const game of games.value) {
+        if (main.id in game.scores && !(other.id in game.scores)) {
+          apart++;
+          if (game.result === 'won') wins++;
+        }
+      }
+      if (apart > 0) {
+        apartPairs.push({
+          nameA: main.custom_name || main.names[0] || main.id,
+          nameB: other.custom_name || other.names[0] || other.id,
+          colorA: main.color || '#888',
+          colorB: other.color || '#888',
+          gamesApart: apart,
+          winRateApart: Math.round(wins / apart * 100),
+        });
+      }
+    }
+    return { togetherPairs, apartPairs };
   });
 
   const statsData = computed(() => {
@@ -1884,18 +2158,62 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
         computeGameMean(game, propertyId, normalizePerMinute.value)
       );
       const gameBests = precomputeGameBests(games.value, propertyId, normalizePerMinute.value, sortAscending);
+      // Build groups with parent and their sub-rows
+      const groups = [];
+      for (const player of trackedPlayers.value) {
+        const parent = computePlayerStats(player, games.value, propertyId, sortAscending, normalizePerMinute.value, gameMeans, gameBests);
+        const group = { parent, subs: [] };
+        if (perName.value) {
+          const nameSet = new Set();
+          for (const game of games.value) {
+            const n = game.players[player.id];
+            if (n && player.id in game.scores) nameSet.add(n);
+          }
+          for (const name of [...nameSet].sort()) {
+            const sub = computePlayerStats(player, games.value, propertyId, sortAscending, normalizePerMinute.value, gameMeans, gameBests, name);
+            sub.name = name;
+            sub._isSubName = true;
+            sub._parentColor = player.color || '#888';
+            group.subs.push(sub);
+          }
+        }
+        groups.push(group);
+      }
+      // Sort groups by parent's total games (descending)
+      groups.sort((a, b) => b.parent.bestTotal - a.parent.bestTotal);
+      // Flatten into players array
+      const players = [];
+      for (const group of groups) {
+        players.push(group.parent);
+        players.push(...group.subs);
+      }
       return {
         propertyId,
         propertyName: propertyMeta?.display_name || propertyId,
         sortAscending,
-        players: trackedPlayers.value.map(player =>
-          computePlayerStats(player, games.value, propertyId, sortAscending, normalizePerMinute.value, gameMeans, gameBests)
-        ),
+        players,
       };
     });
   });
 
   watch(chartMode, () => { hiddenLegendProperties.clear(); });
+
+  // Persist chart toggle settings on change.
+  watch(
+    [normalizePerMinute, showVsAverage, hideUnnamed, hideBots, chartMode, xAxisMode, perName],
+    () => {
+      if (skipToggleSave) { skipToggleSave = false; return; }
+      saveAppSetting('chart_toggles', JSON.stringify({
+        normalizePerMinute: normalizePerMinute.value,
+        showVsAverage: showVsAverage.value,
+        hideUnnamed: hideUnnamed.value,
+        hideBots: hideBots.value,
+        chartMode: chartMode.value,
+        xAxisMode: xAxisMode.value,
+        perName: perName.value,
+      }));
+    }
+  );
 
   function buildChartData() {
     const currentGames = games.value;
@@ -1932,6 +2250,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
         hideBots: hideBots.value, hideUnnamed: hideUnnamed.value,
         normalizePerMinute: normalizePerMinute.value,
         vsAverage: showVsAverage.value, xAxisMode: effectiveXAxisMode.value,
+        perName: perName.value, trackedPlayers: trackedPlayers.value,
         hiddenLegendProperties,
       };
 
@@ -2026,16 +2345,14 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
               filter: (item) => datasets[item.datasetIndex]?._isTracked,
               usePointStyle: true, pointStyle: 'circle',
             },
-            onClick: isBarMode
-              ? (event, legendItem, legend) => {
-                  const dataset = legend.chart.data.datasets[legendItem.datasetIndex];
-                  const propertyId = dataset?._propertyId;
-                  if (!propertyId) return;
-                  if (hiddenLegendProperties.has(propertyId)) hiddenLegendProperties.delete(propertyId);
-                  else hiddenLegendProperties.add(propertyId);
-                  nextTick(renderChart);
-                }
-              : undefined,
+            onClick: (event, legendItem, legend) => {
+              const dataset = legend.chart.data.datasets[legendItem.datasetIndex];
+              const propertyId = dataset?._propertyId;
+              if (!propertyId) return;
+              if (hiddenLegendProperties.has(propertyId)) hiddenLegendProperties.delete(propertyId);
+              else hiddenLegendProperties.add(propertyId);
+              nextTick(renderChart);
+            },
           },
           tooltip: {
             enabled: false,
@@ -2054,7 +2371,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
   }
 
   watch(
-    [loadGeneration, normalizePerMinute, showVsAverage, hideUnnamed, hideBots, chartMode, xAxisMode, trackedPlayers],
+    [loadGeneration, normalizePerMinute, showVsAverage, hideUnnamed, hideBots, chartMode, xAxisMode, perName, trackedPlayers],
     () => {
       if (loading.value) return;
       nextTick(renderChart);
@@ -2072,9 +2389,9 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
 
   return {
     chartCanvas, normalizePerMinute, showVsAverage, hideUnnamed, hideBots,
-    chartMode, xAxisMode, effectiveXAxisMode, hiddenLegendProperties,
-    showWinRate, generalStatsData, statsData,
-    renderChart, deviationClass,
+    chartMode, xAxisMode, effectiveXAxisMode, perName, hiddenLegendProperties,
+    showWinRate, generalStatsData, relativeStatsData, statsData,
+    renderChart, restoreChartSettings, deviationClass,
   };
 }
 
@@ -2189,6 +2506,8 @@ const app = createApp({
       filters.loadInitialData();
       playerMgmt.loadPlayers();
       playerMgmt.initPlayerEdits();
+      playerMgmt.restorePlayerSettings();
+      chart.restoreChartSettings();
       // filter watcher handles loadGames via debounced reaction to filter changes
     }
 
@@ -2235,12 +2554,18 @@ const app = createApp({
       pickFiles: () => ingestion.pickFiles(reloadAll),
       reingest: () => ingestion.reingest(reloadAll),
       resetDatabase: () => ingestion.resetDB(afterReset),
+      resetSettings: async () => {
+        if (!confirm('Reset all settings to defaults?')) return;
+        await clearAppSettings();
+        location.reload();
+      },
       // Dropdown
       openDropdown,
       toggleDropdown,
       // Utilities
       groupColor,
       formatNum: formatNumber,
+      formatDuration,
       MAX_SELECTED_PROPERTIES,
     };
   },
