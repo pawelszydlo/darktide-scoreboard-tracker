@@ -12,6 +12,16 @@
 </head>
 <body>
 <div id="app">
+  <!-- Path hint overlay (Windows only) -->
+  <div v-if="showPathHint" class="path-hint-overlay" @click="dismissPathHint">
+    <div class="path-hint-text">
+      <p>The default location of scoreboard files is:</p>
+      <code>%APPDATA%\Fatshark\Darktide\scoreboard_history</code>
+      <p class="path-hint-example">Example: <code>C:\Users\YourName\AppData\Roaming\Fatshark\Darktide\scoreboard_history</code></p>
+      <p class="path-hint-dismiss">Click anywhere to dismiss</p>
+    </div>
+  </div>
+
   <!-- Ingestion bar -->
   <div class="ingest-bar">
     <template v-if="hasNativeAccess">

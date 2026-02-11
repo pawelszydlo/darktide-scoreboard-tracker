@@ -32,7 +32,7 @@ Import your scoreboard data and get rich analytics on player performance:
 
 1. **Open** `index.html` in your browser
 2. **Click** "Choose Scoreboard Directory" and point it at your scoreboard folder
-   - Typically located at `%APPDATA%/Fatshark/Darktide/scoreboard_tracker`
+   - Typically located at `%APPDATA%/Fatshark/Darktide/scoreboard_history`
 3. **Wait** for ingestion to finish - all data is parsed and stored locally in your browser
 4. **Explore** - select properties, adjust filters, compare players
 

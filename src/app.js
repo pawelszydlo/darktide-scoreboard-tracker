@@ -2553,6 +2553,25 @@ const app = createApp({
       window.removeEventListener('keydown', onEscape);
     });
 
+    const isWindows = true; //navigator.userAgent.indexOf('Win') !== -1;
+    const showPathHint = ref(false);
+
+    function showPathHintOverlay(action) {
+      if (!isWindows) { action(); return; }
+      showPathHint.value = true;
+      nextTick(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => action());
+        });
+      });
+    }
+
+    function dismissPathHint() {
+      showPathHint.value = false;
+    }
+
+    watch(ingestion.ingesting, (v) => { if (v) showPathHint.value = false; });
+
     return {
       ...filters,
       ...playerMgmt,
@@ -2563,8 +2582,10 @@ const app = createApp({
       ingestProgress: ingestion.ingestProgress,
       dirHandle: ingestion.dirHandle,
       hasNativeAccess: ingestion.hasNativeAccess,
-      pickDirectory: () => ingestion.pickDirectory(reloadAll),
-      pickFiles: () => ingestion.pickFiles(reloadAll),
+      showPathHint,
+      dismissPathHint,
+      pickDirectory: () => showPathHintOverlay(async () => { await ingestion.pickDirectory(reloadAll); showPathHint.value = false; }),
+      pickFiles: () => showPathHintOverlay(() => ingestion.pickFiles(reloadAll)),
       reingest: () => ingestion.reingest(reloadAll),
       resetDatabase: () => ingestion.resetDB(afterReset),
       resetSettings: async () => {
