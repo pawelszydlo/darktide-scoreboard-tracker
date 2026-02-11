@@ -79,6 +79,15 @@ function formatNumber(value) {
   return Number.isInteger(value) ? value.toString() : value.toFixed(1);
 }
 
+/** Format a number with k/m suffixes, keeping two decimal places. */
+function formatNumber2(value) {
+  if (value == null) return '';
+  const absolute = Math.abs(value);
+  if (absolute >= 1_000_000) return (value / 1_000_000).toFixed(2) + 'm';
+  if (absolute >= 1_000) return (value / 1_000).toFixed(2) + 'k';
+  return value.toFixed(2);
+}
+
 /** Format seconds into human-readable duration: "XXm", "XhYm", or "XdYhZm". */
 function formatDuration(seconds) {
   if (seconds == null || seconds <= 0) return '0m';
@@ -107,6 +116,17 @@ function normalizeValue(rawValue, durationSeconds, shouldNormalize) {
 function computeGameMean(game, propertyId, shouldNormalizePerMinute) {
   const values = Object.values(game.scores)
     .map(s => s[propertyId])
+    .filter(v => v != null);
+  if (values.length === 0) return 0;
+  const processed = values.map(v => normalizeValue(v, game.duration_seconds, shouldNormalizePerMinute));
+  return processed.reduce((sum, v) => sum + v, 0) / processed.length;
+}
+
+/** Compute the mean value of a property excluding a specific player from a single game. */
+function computeGameMeanExcluding(game, propertyId, shouldNormalizePerMinute, excludePlayerId) {
+  const values = Object.entries(game.scores)
+    .filter(([pid, _]) => pid !== excludePlayerId)
+    .map(([_, s]) => s[propertyId])
     .filter(v => v != null);
   if (values.length === 0) return 0;
   const processed = values.map(v => normalizeValue(v, game.duration_seconds, shouldNormalizePerMinute));
@@ -1208,7 +1228,10 @@ function computePlayerStats(player, games, propertyId, sortAscending, normalizeP
 // ── Chart ──────────────────────────────────────────────────────────
 
 /** Pre-calculate the per-game team average for a property (used in vs-average mode). */
-function precomputeGameAverages(games, propertyId, normalizePerMinute) {
+function precomputeGameAverages(games, propertyId, normalizePerMinute, excludePlayerId) {
+  if (excludePlayerId) {
+    return games.map(game => computeGameMeanExcluding(game, propertyId, normalizePerMinute, excludePlayerId));
+  }
   return games.map(game => computeGameMean(game, propertyId, normalizePerMinute));
 }
 
@@ -1228,10 +1251,12 @@ function buildScatterPlayerDatasets(options) {
     trackedIds, settingsMap, greyColorMap, selectedPropertyCount,
     hideBots, hideUnnamed, normalizePerMinute, vsAverage, xAxisMode,
     perName, trackedPlayers, hiddenLegendProperties,
+    vsOthers, mainPlayerId,
   } = options;
 
-  const useSecondAxis = !vsAverage && selectedPropertyCount > 1;
-  const gameMeans = vsAverage ? precomputeGameAverages(games, propertyId, normalizePerMinute) : null;
+  const isDeviation = vsAverage || vsOthers;
+  const useSecondAxis = !isDeviation && selectedPropertyCount > 1;
+  const gameMeans = isDeviation ? precomputeGameAverages(games, propertyId, normalizePerMinute, vsOthers ? mainPlayerId : undefined) : null;
   const datasets = [];
 
   /** Build a single scatter dataset for a player, optionally filtered by name. */
@@ -1245,7 +1270,7 @@ function buildScatterPlayerDatasets(options) {
       const rawValue = game.scores[playerId]?.[propertyId];
       if (rawValue == null) continue;
 
-      const value = computePointValue(rawValue, game, normalizePerMinute, vsAverage, gameMeans?.[gameIndex] ?? 0);
+      const value = computePointValue(rawValue, game, normalizePerMinute, isDeviation, gameMeans?.[gameIndex] ?? 0);
       const xValue = xAxisMode === 'time' ? game.timestamp * 1000 : gameIndex;
 
       if (dataPoints.length > 0 && lastGameIndex !== gameIndex - 1) {
@@ -1296,6 +1321,7 @@ function buildScatterPlayerDatasets(options) {
   }
 
   for (const playerId of allPlayerIds) {
+    if (vsOthers && playerId !== mainPlayerId) continue;
     if (hideBots && playerId.startsWith('bot_')) continue;
     const isTracked = trackedIds.has(playerId);
     if (hideUnnamed && !isTracked) continue;
@@ -1333,15 +1359,17 @@ function buildBarPlayerDatasets(options) {
     games, propertyId, propertyIndex, propertyLabel, allPlayerIds,
     trackedIds, settingsMap, greyColorMap, selectedPropertyCount,
     hideBots, hideUnnamed, normalizePerMinute, vsAverage, hiddenLegendProperties,
-    perName,
+    perName, vsOthers, mainPlayerId,
   } = options;
 
-  const useSecondAxis = !vsAverage && selectedPropertyCount > 1;
-  const gameMeans = vsAverage ? precomputeGameAverages(games, propertyId, normalizePerMinute) : null;
+  const isDeviation = vsAverage || vsOthers;
+  const useSecondAxis = !isDeviation && selectedPropertyCount > 1;
+  const gameMeans = isDeviation ? precomputeGameAverages(games, propertyId, normalizePerMinute, vsOthers ? mainPlayerId : undefined) : null;
 
   const visiblePlayersPerGame = games.map(game => {
     return Object.keys(game.scores)
       .filter(playerId => {
+        if (vsOthers && playerId !== mainPlayerId) return false;
         if (hideBots && playerId.startsWith('bot_')) return false;
         if (hideUnnamed && !trackedIds.has(playerId)) return false;
         return true;
@@ -1382,7 +1410,7 @@ function buildBarPlayerDatasets(options) {
       const playerId = gamePlayers[slotIndex];
       const rawValue = game.scores[playerId]?.[propertyId];
       const value = rawValue != null
-        ? computePointValue(rawValue, game, normalizePerMinute, vsAverage, gameMeans?.[gameIndex] ?? 0)
+        ? computePointValue(rawValue, game, normalizePerMinute, isDeviation, gameMeans?.[gameIndex] ?? 0)
         : null;
 
       const playerSettings = settingsMap[playerId];
@@ -1513,6 +1541,8 @@ function getTooltipPlayerInfo(dataPoint, isBarMode) {
       name: ds._playerNamesPerGame?.[dataPoint.dataIndex] || 'Unknown',
       playerId: ds._playerIdsPerGame?.[dataPoint.dataIndex],
       value: dataPoint.raw,
+      rawValue: null,
+      duration: null,
       dotColor: sanitizeCssColor(Array.isArray(colors) ? colors[dataPoint.dataIndex] : (colors || '#888')),
     };
   }
@@ -1520,12 +1550,14 @@ function getTooltipPlayerInfo(dataPoint, isBarMode) {
     name: dataPoint.raw.playerNameInGame || 'Unknown',
     playerId: dataPoint.dataset._playerId,
     value: dataPoint.raw.y,
+    rawValue: dataPoint.raw.rawValue,
+    duration: dataPoint.raw.duration,
     dotColor: sanitizeCssColor(dataPoint.dataset.borderColor || '#888'),
   };
 }
 
 /** Create a Chart.js external tooltip callback that renders HTML into #chart-tooltip. */
-function createTooltipHandler(propertyIds, propertyMap, settingsMap, isBarMode, gameMetadata, isVsAverage, games, normalizePerMinute) {
+function createTooltipHandler(propertyIds, propertyMap, settingsMap, isBarMode, gameMetadata, isVsAverage, games, normalizePerMinute, isVsOthers, vsOthersPlayerId) {
   return (context) => {
     const tooltipElement = document.getElementById('chart-tooltip');
     if (!tooltipElement) return;
@@ -1574,8 +1606,11 @@ function createTooltipHandler(propertyIds, propertyMap, settingsMap, isBarMode, 
 
       html += `<div class="tt-prop-name">${escapeHtml(propertyName)}`;
       if (isVsAverage && games && gameInfo.gameIndex >= 0 && gameInfo.gameIndex < games.length) {
-        const avg = computeGameMean(games[gameInfo.gameIndex], propertyId, normalizePerMinute);
-        html += ` <span style="color:#ffeb3b;font-weight:normal;font-size:0.85em">(avg: ${formatNumber(avg)})</span>`;
+        const avg = isVsOthers
+          ? computeGameMeanExcluding(games[gameInfo.gameIndex], propertyId, normalizePerMinute, vsOthersPlayerId)
+          : computeGameMean(games[gameInfo.gameIndex], propertyId, normalizePerMinute);
+        const avgLabel = isVsOthers ? "Others' avg" : 'avg';
+        html += ` <span style="color:#ffeb3b;font-weight:normal;font-size:0.85em">(${avgLabel}: ${formatNumber2(avg)})</span>`;
       }
       html += `</div>`;
 
@@ -1583,10 +1618,30 @@ function createTooltipHandler(propertyIds, propertyMap, settingsMap, isBarMode, 
         const info = getTooltipPlayerInfo(dataPoint, isBarMode);
         const customName = info.playerId ? settingsMap[info.playerId]?.name : null;
         const label = customName ? `${info.name} (${customName})` : info.name;
-        html += `<div class="tt-player">`
-          + `<span class="tt-dot" style="background:${escapeHtml(info.dotColor)}"></span>`
-          + `<span>${escapeHtml(label)}</span>`
-          + `<span class="tt-val">${isVsAverage && info.value > 0 ? '+' : ''}${formatNumber(info.value)}${isVsAverage ? '%' : ''}</span></div>`;
+        if (isVsAverage) {
+          // Compute normalized actual value for display
+          let actualValue;
+          if (info.rawValue != null && info.duration != null) {
+            actualValue = normalizeValue(info.rawValue, info.duration, normalizePerMinute);
+          } else if (games && gameInfo.gameIndex >= 0 && info.playerId) {
+            const game = games[gameInfo.gameIndex];
+            const rv = game?.scores[info.playerId]?.[propertyId];
+            actualValue = rv != null ? normalizeValue(rv, game.duration_seconds, normalizePerMinute) : null;
+          }
+          const pctValue = info.value;
+          const pctSign = pctValue > 0 ? '+' : '';
+          const pctColor = (sortAscending ? pctValue >= 0 : pctValue <= 0) ? '#4caf50' : '#e94560';
+          html += `<div class="tt-player">`
+            + `<span class="tt-dot" style="background:${escapeHtml(info.dotColor)}"></span>`
+            + `<span class="tt-name">${escapeHtml(label)}</span>`
+            + `<span class="tt-val">${actualValue != null ? formatNumber(actualValue) : '?'}</span>`
+            + `<span class="tt-pct" style="color:${pctColor}">(${pctSign}${formatNumber(pctValue)}%)</span></div>`;
+        } else {
+          html += `<div class="tt-player">`
+            + `<span class="tt-dot" style="background:${escapeHtml(info.dotColor)}"></span>`
+            + `<span>${escapeHtml(label)}</span>`
+            + `<span class="tt-val">${formatNumber(info.value)}</span></div>`;
+        }
       }
     }
 
@@ -2040,6 +2095,9 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
   const chartCanvas = ref(null);
   const normalizePerMinute = ref(false);
   const showVsAverage = ref(false);
+  const showVsOthers = ref(false);
+  const hasMainPlayer = computed(() => trackedPlayers.value.some(p => p.is_main));
+  const mainPlayerId = computed(() => trackedPlayers.value.find(p => p.is_main)?.id ?? null);
   const hideUnnamed = ref(false);
   const hideBots = ref(true);
   const chartMode = ref('line');
@@ -2058,6 +2116,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
         const t = JSON.parse(saved);
         if (t.normalizePerMinute != null) normalizePerMinute.value = t.normalizePerMinute;
         if (t.showVsAverage != null) showVsAverage.value = t.showVsAverage;
+        if (t.showVsOthers != null) showVsOthers.value = t.showVsOthers;
         if (t.hideUnnamed != null) hideUnnamed.value = t.hideUnnamed;
         if (t.hideBots != null) hideBots.value = t.hideBots;
         if (t.chartMode) chartMode.value = t.chartMode;
@@ -2197,9 +2256,9 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
     return selectedPropertyIds.value.map(propertyId => {
       const propertyMeta = propertyMap.value[propertyId];
       const sortAscending = propertyMeta?.sort_direction === 'ASC';
-      const gameMeans = games.value.map(game =>
-        computeGameMean(game, propertyId, normalizePerMinute.value)
-      );
+      const gameMeans = showVsOthers.value && mainPlayerId.value
+        ? precomputeGameAverages(games.value, propertyId, normalizePerMinute.value, mainPlayerId.value)
+        : games.value.map(game => computeGameMean(game, propertyId, normalizePerMinute.value));
       const gameBests = precomputeGameBests(games.value, propertyId, normalizePerMinute.value, sortAscending);
       // Build groups with parent and their sub-rows
       const groups = [];
@@ -2248,12 +2307,13 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
 
   // Persist chart toggle settings on change.
   watch(
-    [normalizePerMinute, showVsAverage, hideUnnamed, hideBots, chartMode, xAxisMode, perName],
+    [normalizePerMinute, showVsAverage, showVsOthers, hideUnnamed, hideBots, chartMode, xAxisMode, perName],
     () => {
       if (skipToggleSave) { skipToggleSave = false; return; }
       saveAppSetting('chart_toggles', JSON.stringify({
         normalizePerMinute: normalizePerMinute.value,
         showVsAverage: showVsAverage.value,
+        showVsOthers: showVsOthers.value,
         hideUnnamed: hideUnnamed.value,
         hideBots: hideBots.value,
         chartMode: chartMode.value,
@@ -2297,7 +2357,9 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
         selectedPropertyCount: propertyIds.length,
         hideBots: hideBots.value, hideUnnamed: hideUnnamed.value,
         normalizePerMinute: normalizePerMinute.value,
-        vsAverage: showVsAverage.value, xAxisMode: effectiveXAxisMode.value,
+        vsAverage: showVsAverage.value, vsOthers: showVsOthers.value,
+        mainPlayerId: mainPlayerId.value,
+        xAxisMode: effectiveXAxisMode.value,
         perName: perName.value, trackedPlayers: trackedPlayers.value,
         hiddenLegendProperties,
       };
@@ -2328,22 +2390,23 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
     const settings = playerSettingsMap.value;
     const propertyIds = selectedPropertyIds.value;
     const propertyMapValue = propertyMap.value;
-    const needsSecondAxis = propertyIds.length > 1 && !showVsAverage.value;
+    const isVsDeviation = showVsAverage.value || showVsOthers.value;
+    const needsSecondAxis = propertyIds.length > 1 && !isVsDeviation;
     const isBarMode = chartMode.value === 'bar';
 
     const annotations = {};
-    if (showVsAverage.value) {
+    if (isVsDeviation) {
       annotations['avgLine'] = {
         type: 'line', yMin: 0, yMax: 0,
         borderColor: 'rgba(255, 235, 59, 0.6)', borderWidth: 2, borderDash: [6, 4],
         label: {
-          display: true, content: 'Average', position: 'start',
+          display: true, content: showVsOthers.value ? "Others' average" : 'Average', position: 'start',
           backgroundColor: 'rgba(255, 235, 59, 0.15)', color: '#ffeb3b', font: { size: 10 },
         },
       };
     }
 
-    const isVsAverage = showVsAverage.value;
+    const isVsAverage = isVsDeviation;
     const yTickCallback = isVsAverage
       ? (value) => (value > 0 ? '+' : '') + formatNumber(value) + '%'
       : (value) => formatNumber(value);
@@ -2406,8 +2469,8 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
             enabled: false,
             external: createTooltipHandler(
               [...propertyIds], { ...propertyMapValue }, { ...settings },
-              isBarMode, gameMetadata, showVsAverage.value,
-              currentGames, normalizePerMinute.value,
+              isBarMode, gameMetadata, isVsDeviation,
+              currentGames, normalizePerMinute.value, showVsOthers.value, mainPlayerId.value,
             ),
           },
           annotation: { annotations },
@@ -2419,7 +2482,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
   }
 
   watch(
-    [loadGeneration, normalizePerMinute, showVsAverage, hideUnnamed, hideBots, chartMode, xAxisMode, perName, trackedPlayers],
+    [loadGeneration, normalizePerMinute, showVsAverage, showVsOthers, hideUnnamed, hideBots, chartMode, xAxisMode, perName, trackedPlayers],
     () => {
       if (loading.value) return;
       nextTick(renderChart);
@@ -2436,7 +2499,8 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
   }
 
   return {
-    chartCanvas, normalizePerMinute, showVsAverage, hideUnnamed, hideBots,
+    chartCanvas, normalizePerMinute, showVsAverage, showVsOthers, hasMainPlayer,
+    hideUnnamed, hideBots,
     chartMode, xAxisMode, effectiveXAxisMode, perName, hiddenLegendProperties,
     showWinRate, showStreaks, generalStatsData, relativeStatsData, statsData,
     renderChart, restoreChartSettings, deviationClass,

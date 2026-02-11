@@ -206,7 +206,8 @@
         <span class="stat-value">Avg: {{ formatNum(playerStat.average) }}</span>
         <span class="stat-value stat-top-in"
           :data-tooltip="'Was in first place in ' + playerStat.bestCount + ' out of ' + playerStat.bestTotal + ' games'">Top in: {{ playerStat.bestPercent }}%</span>
-        <span class="stat-value" :class="deviationClass(playerStat.deviation, stat.sortAscending)"
+        <span v-if="!showVsOthers || playerStat.isMain"
+          class="stat-value" :class="deviationClass(playerStat.deviation, stat.sortAscending)"
           :data-tooltip="'Was summarily ' + Math.abs(playerStat.deviation).toFixed(1) + '% ' + (deviationClass(playerStat.deviation, stat.sortAscending) === 'positive' ? 'better' : 'worse') + ' than average'">
           Avg dev: {{ playerStat.deviation >= 0 ? '+' : '' }}{{ playerStat.deviation.toFixed(1) }}%
         </span>
@@ -222,7 +223,12 @@
       @click="normalizePerMinute = !normalizePerMinute">Per minute</button>
     <span class="toggle-spacer"></span>
     <button class="toggle-btn" :class="{on: showVsAverage}"
-      @click="showVsAverage = !showVsAverage">vs Average</button>
+      data-tooltip="Compare everyone to the whole team's average."
+      @click="showVsAverage = !showVsAverage; if(showVsAverage) showVsOthers = false">vs Average</button>
+    <button class="toggle-btn" :class="{on: showVsOthers}"
+      :disabled="!hasMainPlayer"
+      :data-tooltip="!hasMainPlayer ? 'Set a main player first' : 'Compare the main player to the average of the others.'"
+      @click="showVsOthers = !showVsOthers; if(showVsOthers) showVsAverage = false">vs Others</button>
     <button class="toggle-btn" :class="{on: hideUnnamed}"
       @click="hideUnnamed = !hideUnnamed">Hide unnamed</button>
     <button class="toggle-btn" :class="{on: hideBots}"
