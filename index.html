@@ -153,7 +153,7 @@
 
   <!-- Stats box -->
   <div class="stats-box" v-if="(generalStatsData || statsData.length > 0) && trackedPlayers.length > 0">
-    <div class="stat-card" v-if="generalStatsData">
+    <div class="stat-card stat-card-general" v-if="generalStatsData">
       <div class="stat-card-title">General</div>
       <div v-for="(playerStat, idx) in generalStatsData.players" :key="playerStat.playerId + '-' + idx"
         :class="['stat-player-row', { 'stat-sub-row': playerStat._isSubName }]">

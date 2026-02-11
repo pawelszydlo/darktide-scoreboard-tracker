@@ -2061,6 +2061,8 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
     const groups = [];
     for (const player of trackedPlayers.value) {
       const parent = computePlayerGeneralStats(player, games.value);
+      // Skip players with 0 games
+      if (parent.totalGames === 0) continue;
       const group = { parent, subs: [] };
       if (perName.value) {
         const nameSet = new Set();
@@ -2098,13 +2100,18 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
       for (const game of games.value) { if (p.id in game.scores) count++; }
       return count;
     });
-    const mainIdx = gameCounts.indexOf(Math.max(...gameCounts));
+    // Skip if max game count is 0
+    const maxGames = Math.max(...gameCounts);
+    if (maxGames === 0) return null;
+    const mainIdx = gameCounts.indexOf(maxGames);
     const main = tp[mainIdx];
     // Together pairs: main player + each other player
     const togetherPairs = [];
     for (let i = 0; i < tp.length; i++) {
       if (i === mainIdx) continue;
       const other = tp[i];
+      // Skip players with 0 games
+      if (gameCounts[i] === 0) continue;
       let together = 0, wins = 0;
       for (const game of games.value) {
         if (main.id in game.scores && other.id in game.scores) {
@@ -2128,6 +2135,8 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
     for (let i = 0; i < tp.length; i++) {
       if (i === mainIdx) continue;
       const other = tp[i];
+      // Skip players with 0 games
+      if (gameCounts[i] === 0) continue;
       let apart = 0, wins = 0;
       for (const game of games.value) {
         if (main.id in game.scores && !(other.id in game.scores)) {
@@ -2162,6 +2171,8 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
       const groups = [];
       for (const player of trackedPlayers.value) {
         const parent = computePlayerStats(player, games.value, propertyId, sortAscending, normalizePerMinute.value, gameMeans, gameBests);
+        // Skip players with 0 games for this property
+        if (parent.bestTotal === 0) continue;
         const group = { parent, subs: [] };
         if (perName.value) {
           const nameSet = new Set();

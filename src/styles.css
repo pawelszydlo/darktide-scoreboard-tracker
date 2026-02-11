@@ -224,7 +224,11 @@ button.active { background: var(--accent); }
   padding: 8px 12px;
   min-width: 200px;
   flex: 1;
-  max-width: 400px;
+  max-width: 500px;
+  min-width: 300px;
+}
+.stat-card-general {
+    min-width: 400px;
 }
 .stat-card-title {
   font-size: 11px;
