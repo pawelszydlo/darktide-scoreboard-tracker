@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Darktide Scoreboard Tracker 1.0</title>
 <link rel="stylesheet" href="src/styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css"
+  onerror="this.onerror=null;this.href='lib/flatpickr.min.css';">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css"
+  onerror="this.onerror=null;this.href='lib/flatpickr-dark.min.css';">
 <script>
 (function() {
   function loadScript(src) {
@@ -29,6 +33,7 @@
     loadWithFallback('https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js', 'lib/vue.global.prod.js'),
     loadWithFallback('https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.js', 'lib/chart.umd.js'),
     loadWithFallback('https://cdn.jsdelivr.net/npm/sql.js/dist/sql-asm.js', 'lib/sql-asm.js'),
+    loadWithFallback('https://cdn.jsdelivr.net/npm/flatpickr', 'lib/flatpickr.min.js'),
   ])
   .then(function() {
     // Phase 2: annotation plugin depends on Chart.js
@@ -122,11 +127,9 @@
           <option value="custom">Custom Dates</option>
           <option value="last_n">Last N Games</option>
         </select>
-        <template v-if="rangeMode === 'custom'">
-          <input type="date" v-model="customStartDate">
-          <span class="date-sep">-</span>
-          <input type="date" v-model="customEndDate">
-        </template>
+        <input type="text" ref="dateRangeInput" class="input-date-range"
+          placeholder="Select date range..." readonly
+          v-if="rangeMode === 'custom'">
         <input v-if="rangeMode === 'last_n'" type="number" v-model.number="lastNGames"
           min="1" max="10000" class="input-last-n" placeholder="N">
       </div>

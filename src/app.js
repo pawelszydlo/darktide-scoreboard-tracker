@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 
-const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } = Vue;
+const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, shallowRef } = Vue;
 
 // ── Utilities ──────────────────────────────────────────────────────
 
@@ -1580,7 +1580,7 @@ function createTooltipHandler(propertyIds, propertyMap, settingsMap, isBarMode, 
     const durationMinutes = Math.floor(gameInfo.duration / 60);
     const durationSeconds = gameInfo.duration % 60;
 
-    let html = `<div class="tt-header">${escapeHtml(date.toLocaleDateString())} ${escapeHtml(timeString)}</div>`
+    let html = `<div class="tt-header">${escapeHtml(date.toLocaleDateString('sv-SE'))} ${escapeHtml(timeString)}</div>`
       + `<div class="tt-sub">${escapeHtml(gameInfo.missionName)} &middot; ${escapeHtml(String(difficultyName))}`
       + ` &middot; ${escapeHtml(gameInfo.result)} &middot; ${durationMinutes}m${durationSeconds}s</div>`;
 
@@ -2429,7 +2429,7 @@ function useChart({ games, selectedPropertyIds, resultFilter, loading, loadGener
           ticks: {
             color: '#a0a0b0',
             callback: (value) => effectiveXAxisMode.value === 'time'
-              ? new Date(value).toLocaleDateString([], { month: 'short', day: 'numeric' })
+              ? new Date(value).toLocaleDateString('sv-SE', { month: '2-digit', day: '2-digit' })
               : Math.round(value),
             maxTicksLimit: 20,
           },
@@ -2656,6 +2656,7 @@ const app = createApp({
       try {
         await ingestion.init();
         reloadAll();
+        if (filters.rangeMode.value === 'custom') initFlatpickr();
       } catch (e) {
         console.error('DB init failed:', e);
         filters.errorMessage.value = 'Failed to initialize database: ' + e.message;
@@ -2664,6 +2665,52 @@ const app = createApp({
 
     onUnmounted(() => {
       window.removeEventListener('keydown', onEscape);
+      destroyFlatpickr();
+    });
+
+    // ── Flatpickr for custom date range ──
+    const dateRangeInput = ref(null);
+    const flatpickrInstance = shallowRef(null);
+
+    function destroyFlatpickr() {
+      if (flatpickrInstance.value) {
+        flatpickrInstance.value.destroy();
+        flatpickrInstance.value = null;
+      }
+    }
+
+    function initFlatpickr() {
+      destroyFlatpickr();
+      nextTick(() => {
+        const el = dateRangeInput.value;
+        if (!el || typeof flatpickr === 'undefined') return;
+        const defaultDates = [];
+        if (filters.customStartDate.value) defaultDates.push(filters.customStartDate.value);
+        if (filters.customEndDate.value) defaultDates.push(filters.customEndDate.value);
+        flatpickrInstance.value = flatpickr(el, {
+          mode: 'range',
+          dateFormat: 'Y-m-d',
+          defaultDate: defaultDates.length > 0 ? defaultDates : undefined,
+          theme: 'dark',
+          onChange(selectedDates) {
+            if (selectedDates.length === 2) {
+              const fmt = (d) => d.getFullYear() + '-' +
+                String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                String(d.getDate()).padStart(2, '0');
+              filters.customStartDate.value = fmt(selectedDates[0]);
+              filters.customEndDate.value = fmt(selectedDates[1]);
+            }
+          },
+        });
+      });
+    }
+
+    watch(filters.rangeMode, (mode) => {
+      if (mode === 'custom') {
+        initFlatpickr();
+      } else {
+        destroyFlatpickr();
+      }
     });
 
     const isWindows = navigator.userAgent.indexOf('Win') !== -1;
@@ -2696,6 +2743,7 @@ const app = createApp({
       rangeMode: filters.rangeMode,
       customStartDate: filters.customStartDate,
       customEndDate: filters.customEndDate,
+      dateRangeInput,
       lastNGames: filters.lastNGames,
       resultFilter: filters.resultFilter,
       selectedDifficulties: filters.selectedDifficulties,
