@@ -1342,14 +1342,12 @@ function buildScatterPlayerDatasets(options) {
       names.forEach((name, nameIndex) => {
         const customName = settings?.name || '';
         const namePart = `${name} (${customName})`;
-        const label = selectedPropertyCount > 1
-          ? `${namePart} - ${propertyLabel}` : namePart;
+        const label = `${namePart} - ${propertyLabel}`;
         buildOneDataset(playerId, true, color, label, propertyIndex + nameIndex + 1, name);
       });
     } else {
       const playerLabel = settings?.name || '';
-      const datasetLabel = selectedPropertyCount > 1
-        ? `${playerLabel} - ${propertyLabel}` : playerLabel;
+      const datasetLabel = `${playerLabel} - ${propertyLabel}`;
       buildOneDataset(playerId, isTracked, color, datasetLabel, propertyIndex, null);
     }
   }
@@ -1461,8 +1459,7 @@ function buildBarPlayerDatasets(options) {
       const names = [...nameSet].sort();
       names.forEach((name, nameIndex) => {
         const namePart = `${name} (${playerSettings.name})`;
-        const label = selectedPropertyCount > 1
-          ? `${namePart} - ${propertyLabel}` : namePart;
+        const label = `${namePart} - ${propertyLabel}`;
         const shiftedColor = shiftColor(playerSettings.color, propertyIndex + nameIndex + 1);
         datasets.push({
           label,
@@ -1477,8 +1474,7 @@ function buildBarPlayerDatasets(options) {
       });
     } else {
       const shiftedColor = shiftColor(playerSettings.color, propertyIndex);
-      const playerLabel = selectedPropertyCount > 1
-        ? `${playerSettings.name} - ${propertyLabel}` : playerSettings.name;
+      const playerLabel = `${playerSettings.name} - ${propertyLabel}`;
 
       datasets.push({
         label: playerLabel,
