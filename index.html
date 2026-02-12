@@ -4,11 +4,48 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Darktide Scoreboard Tracker 1.0</title>
-<script defer src="lib/vue.global.prod.js"></script>
-<script defer src="lib/chart.umd.js"></script>
-<script defer src="lib/chartjs-plugin-annotation.min.js"></script>
-<script defer src="lib/sql-asm.js"></script>
 <link rel="stylesheet" href="src/styles.css">
+<script>
+(function() {
+  function loadScript(src) {
+    return new Promise(function(resolve, reject) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  function loadWithFallback(cdnUrl, localPath) {
+    return loadScript(cdnUrl).catch(function() {
+      console.warn('CDN failed for ' + cdnUrl + ', falling back to ' + localPath);
+      return loadScript(localPath);
+    });
+  }
+
+  // Phase 1: Load libs that have no interdependencies (parallel)
+  Promise.all([
+    loadWithFallback('https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js', 'lib/vue.global.prod.js'),
+    loadWithFallback('https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.js', 'lib/chart.umd.js'),
+    loadWithFallback('https://cdn.jsdelivr.net/npm/sql.js/dist/sql-asm.js', 'lib/sql-asm.js'),
+  ])
+  .then(function() {
+    // Phase 2: annotation plugin depends on Chart.js
+    return loadWithFallback(
+      'https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3/dist/chartjs-plugin-annotation.min.js',
+      'lib/chartjs-plugin-annotation.min.js'
+    );
+  })
+  .then(function() {
+    // Phase 3: app.js depends on all libs
+    return loadScript('src/app.js');
+  })
+  .catch(function(err) {
+    console.error('Failed to load a required library:', err);
+  });
+})();
+</script>
 </head>
 <body>
 <noscript>
@@ -303,6 +340,5 @@
   </div>
 </div>
 
-<script defer src="src/app.js"></script>
 </body>
 </html>
