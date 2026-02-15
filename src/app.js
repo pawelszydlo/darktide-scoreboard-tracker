@@ -119,7 +119,7 @@ function computeGameMean(game, propertyId, shouldNormalizePerMinute) {
     .filter(v => v != null);
   if (values.length === 0) return 0;
   const processed = values.map(v => normalizeValue(v, game.durationSeconds, shouldNormalizePerMinute));
-  return processed.reduce((sum, v) => sum + v, 0) / processed.length;
+  return processed.reduce((sum, v) => sum + v, 0) / Math.min(processed.length, 4);
 }
 
 /** Compute the mean value of a property excluding a specific player from a single game. */
@@ -130,7 +130,7 @@ function computeGameMeanExcluding(game, propertyId, shouldNormalizePerMinute, ex
     .filter(v => v != null);
   if (values.length === 0) return 0;
   const processed = values.map(v => normalizeValue(v, game.durationSeconds, shouldNormalizePerMinute));
-  return processed.reduce((sum, v) => sum + v, 0) / processed.length;
+  return processed.reduce((sum, v) => sum + v, 0) / Math.min(processed.length, 3);
 }
 
 /** For each game, find the best (max or min depending on sort direction) player value. */
