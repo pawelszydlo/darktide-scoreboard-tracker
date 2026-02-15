@@ -199,7 +199,7 @@ const COLOR_CODE_PATTERN = /\{#color\([^)]*\)\}|\{#reset\(\)\}/g;
 const DEFAULT_GROUP_ID = 'row_resource_score';
 const DEFAULT_GROUP_NAME = 'Resource & Teamwork';
 
-const INGEST_BATCH_SIZE = 50;
+const INGEST_BATCH_SIZE = 200;
 const MAX_SELECTED_PROPERTIES = 5;
 const LONG_GAME_THRESHOLD_SECONDS = 1200;
 const FLOAT_EPSILON = 1e-9;
@@ -339,6 +339,7 @@ CREATE TABLE IF NOT EXISTS game_players (
     player_id TEXT NOT NULL,
     slot      INTEGER NOT NULL,
     name      TEXT NOT NULL,
+    quitter   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (game_id, player_id)
 );
 CREATE INDEX IF NOT EXISTS idx_game_players_player ON game_players(player_id);
@@ -379,6 +380,16 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value TEXT
 );
 `;
+
+const MIGRATIONS = [
+  `ALTER TABLE game_players ADD COLUMN quitter INTEGER NOT NULL DEFAULT 0`,
+];
+
+function runMigrations() {
+  for (const sql of MIGRATIONS) {
+    try { _db.run(sql); } catch (_) { /* column already exists */ }
+  }
+}
 
 let _db = null;
 let _SQL = null;
@@ -471,6 +482,7 @@ async function initDatabase() {
       const arr = saved instanceof Uint8Array ? saved : new Uint8Array(saved);
       _db = new _SQL.Database(arr);
       _db.run(SCHEMA_SQL);
+      runMigrations();
     } catch (e) {
       console.error('Failed to load saved DB, creating fresh:', e);
       _db = new _SQL.Database();
@@ -545,15 +557,15 @@ function insertGame(game) {
 
   for (const [slot, playerId, playerName] of game.players) {
     playerRows.push(playerId, 0);
-    gamePlayerRows.push(gameId, playerId, slot, playerName);
+    gamePlayerRows.push(gameId, playerId, slot, playerName, 0);
   }
   for (const [botId, cleanName] of Object.entries(game.discoveredBots)) {
     playerRows.push(botId, 1);
-    gamePlayerRows.push(gameId, botId, -1, cleanName);
+    gamePlayerRows.push(gameId, botId, -1, cleanName, 0);
   }
   for (const extraId of game.discoveredExtraPlayers) {
     playerRows.push(extraId, 0);
-    gamePlayerRows.push(gameId, extraId, -1, 'Unknown');
+    gamePlayerRows.push(gameId, extraId, -1, 'Unknown', 1);
   }
 
   const playerCount = playerRows.length / 2;
@@ -562,11 +574,11 @@ function insertGame(game) {
     runStatement(`INSERT OR IGNORE INTO players (id, is_bot) VALUES ${placeholders}`, playerRows);
   }
 
-  const gpCount = gamePlayerRows.length / 4;
+  const gpCount = gamePlayerRows.length / 5;
   if (gpCount > 0) {
-    const placeholders = Array.from({ length: gpCount }, () => '(?,?,?,?)').join(',');
+    const placeholders = Array.from({ length: gpCount }, () => '(?,?,?,?,?)').join(',');
     runStatement(
-      `INSERT OR IGNORE INTO game_players (game_id, player_id, slot, name) VALUES ${placeholders}`,
+      `INSERT OR IGNORE INTO game_players (game_id, player_id, slot, name, quitter) VALUES ${placeholders}`,
       gamePlayerRows
     );
   }
@@ -588,7 +600,7 @@ function insertGame(game) {
   }
 
   // Batch scores in chunks
-  const SCORE_BATCH = 100;
+  const SCORE_BATCH = 500;
   for (let i = 0; i < game.scores.length; i += SCORE_BATCH) {
     const batch = game.scores.slice(i, i + SCORE_BATCH);
     const placeholders = batch.map(() => '(?,?,?,?)').join(',');
@@ -782,13 +794,18 @@ function getGames(params) {
   const gameIdPlaceholders = gameIds.map(() => '?').join(',');
 
   const gamePlayers = queryRows(
-    `SELECT game_id, player_id, name FROM game_players WHERE game_id IN (${gameIdPlaceholders})`,
+    `SELECT game_id, player_id, name, quitter FROM game_players WHERE game_id IN (${gameIdPlaceholders})`,
     gameIds
   );
   const playersByGame = {};
+  const quittersByGame = {};
   for (const row of gamePlayers) {
     if (!playersByGame[row.game_id]) playersByGame[row.game_id] = {};
     playersByGame[row.game_id][row.player_id] = row.name;
+    if (row.quitter) {
+      if (!quittersByGame[row.game_id]) quittersByGame[row.game_id] = new Set();
+      quittersByGame[row.game_id].add(row.player_id);
+    }
   }
 
   const propPlaceholders = propertyIds.map(() => '?').join(',');
@@ -815,6 +832,7 @@ function getGames(params) {
     durationSeconds: g.duration_seconds,
     players: playersByGame[g.id] || {},
     scores: scoresByGame[g.id] || {},
+    quitters: quittersByGame[g.id] || new Set(),
   }));
 }
 
@@ -1111,6 +1129,7 @@ async function ingestFiles(source, progressCallback) {
   let ingested = 0;
   let errors = 0;
 
+  runStatement('BEGIN');
   for (let i = 0; i < newFiles.length; i++) {
     try {
       const { name, content } = await readFileContent(newFiles[i]);
@@ -1118,14 +1137,10 @@ async function ingestFiles(source, progressCallback) {
       if (!game) { errors++; continue; }
 
       try {
-        runStatement('SAVEPOINT game_insert');
         insertGame(game);
-        runStatement('RELEASE SAVEPOINT game_insert');
         ingested++;
       } catch (e) {
         console.error('Error inserting', name, e);
-        runStatement('ROLLBACK TO SAVEPOINT game_insert');
-        runStatement('RELEASE SAVEPOINT game_insert');
         errors++;
       }
     } catch (e) {
@@ -1134,15 +1149,38 @@ async function ingestFiles(source, progressCallback) {
     }
 
     if ((i + 1) % INGEST_BATCH_SIZE === 0) {
+      runStatement('COMMIT');
       await saveDatabase();
+      runStatement('BEGIN');
       if (progressCallback) progressCallback(i + 1, newFiles.length, `${i + 1}/${newFiles.length} processed...`);
       await new Promise(r => setTimeout(r, 0));
     }
   }
+  runStatement('COMMIT');
 
+  if (ingested > 0) backfillUnknownPlayerNames();
   await saveDatabase();
   if (progressCallback) progressCallback(newFiles.length, newFiles.length, `Done: ${ingested} ingested, ${errors} errors.`);
   return { ingested, errors, total: luaFiles.length };
+}
+
+/** Update game_players rows named 'Unknown' using known names from other games. */
+function backfillUnknownPlayerNames() {
+  runStatement(`
+    UPDATE game_players
+    SET name = (
+      SELECT gp2.name FROM game_players gp2
+      WHERE gp2.player_id = game_players.player_id
+        AND gp2.name != 'Unknown'
+      LIMIT 1
+    )
+    WHERE name = 'Unknown'
+      AND EXISTS (
+        SELECT 1 FROM game_players gp2
+        WHERE gp2.player_id = game_players.player_id
+          AND gp2.name != 'Unknown'
+      )
+  `);
 }
 
 // ── Statistics ─────────────────────────────────────────────────────
@@ -1616,6 +1654,8 @@ function createTooltipHandler(propertyIds, propertyMap, settingsMap, isBarMode, 
       for (const dataPoint of sortedGroup) {
         const info = getTooltipPlayerInfo(dataPoint, isBarMode);
         const customName = info.playerId ? settingsMap[info.playerId]?.name : null;
+        const isQuitter = info.playerId && games && gameInfo.gameIndex >= 0 && games[gameInfo.gameIndex]?.quitters?.has(info.playerId);
+        const quitterTag = isQuitter ? ' <span style="color:#e94560;font-weight:bold">Q</span>' : '';
         const label = customName ? `${info.name} (${customName})` : info.name;
         if (isVsAverage) {
           // Compute normalized actual value for display
@@ -1632,13 +1672,13 @@ function createTooltipHandler(propertyIds, propertyMap, settingsMap, isBarMode, 
           const pctColor = (sortAscending ? pctValue >= 0 : pctValue <= 0) ? '#4caf50' : '#e94560';
           html += `<div class="tt-player">`
             + `<span class="tt-dot" style="background:${escapeHtml(info.dotColor)}"></span>`
-            + `<span class="tt-name">${escapeHtml(label)}</span>`
+            + `<span class="tt-name">${escapeHtml(label)}${quitterTag}</span>`
             + `<span class="tt-val">${actualValue != null ? formatNumber(actualValue) : '?'}</span>`
             + `<span class="tt-pct" style="color:${pctColor}">(${pctSign}${formatNumber(pctValue)}%)</span></div>`;
         } else {
           html += `<div class="tt-player">`
             + `<span class="tt-dot" style="background:${escapeHtml(info.dotColor)}"></span>`
-            + `<span>${escapeHtml(label)}</span>`
+            + `<span>${escapeHtml(label)}${quitterTag}</span>`
             + `<span class="tt-val">${formatNumber(info.value)}</span></div>`;
         }
       }

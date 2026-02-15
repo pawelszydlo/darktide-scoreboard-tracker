@@ -294,6 +294,7 @@
     <div id="chart-tooltip" style="opacity:0"></div>
     <div v-if="!dbReady" class="chart-overlay">Initializing database...</div>
     <div v-else-if="loading" class="chart-overlay">Loading...</div>
+    <div v-else-if="ingesting" class="chart-overlay">Importing...</div>
     <div v-else-if="gameCountDisplay === 0" class="chart-overlay">Choose the Scoreboard mod history directory to get started</div>
     <div v-else-if="games.length === 0" class="chart-overlay">No data</div>
   </div>
