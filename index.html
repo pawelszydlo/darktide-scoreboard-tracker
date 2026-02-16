@@ -43,15 +43,23 @@
     );
   })
   .then(function() {
-    // Phase 3: app.js depends on all libs
-    return loadScript('src/app.js');
+    // Phase 3: app files in dependency order
+    return loadScript('src/constants.js');
   })
+  .then(function() { return loadScript('src/utils.js'); })
+  .then(function() { return loadScript('src/components.js'); })
+  .then(function() { return loadScript('src/db.js'); })
+  .then(function() { return loadScript('src/parser.js'); })
+  .then(function() { return loadScript('src/stats.js'); })
+  .then(function() { return loadScript('src/chart-builders.js'); })
+  .then(function() { return loadScript('src/chart-tooltip.js'); })
+  .then(function() { return loadScript('src/chart-plugins.js'); })
+  .then(function() { return loadScript('src/app.js'); })
   .catch(function(err) {
     console.error('Failed to load a required library:', err);
   });
 })();
 </script>
-<!-- Google tag (gtag.js) -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-2SKXX23BZK"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
@@ -310,7 +318,7 @@
 
   <!-- Footer -->
   <div class="app-footer">
-    <span>&copy; Darktide Scoreboard Tracker &mdash; Licensed under <a href="https://polyformproject.org/licenses/noncommercial/1.0.0" target="_blank" rel="noopener">PolyForm Noncommercial 1.0.0</a></span>
+    <span>&copy; Darktide Scoreboard Tracker - Licensed under <a href="https://polyformproject.org/licenses/noncommercial/1.0.0" target="_blank" rel="noopener">PolyForm Noncommercial 1.0.0</a></span>
     <span>Contribute on <a href="https://github.com/pawelszydlo/darktide-scoreboard-tracker" target="_blank" rel="noopener">GitHub</a></span>
   </div>
 
